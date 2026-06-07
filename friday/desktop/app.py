@@ -92,6 +92,8 @@ def main() -> int:
     # alias scan. Pre-register a substitution so the lookup is instant.
     QFont.insertSubstitution("Sans Serif", "Helvetica")
     QFont.insertSubstitution("sans-serif", "Helvetica")
+    QFont.insertSubstitution("Monospace", mono)
+    QFont.insertSubstitution("monospace", mono)
     app.setFont(QFont(mono, 10))
 
     _write_pid_lock()

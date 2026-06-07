@@ -34,9 +34,9 @@ Before meaningful work:
 <claude-mem-context>
 # Memory Context
 
-# $CMEM Friday 2026-06-06 2:11am GMT+5:30
+# [Friday] recent context, 2026-06-06 4:10pm GMT+5:30
 
-Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision
+Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 

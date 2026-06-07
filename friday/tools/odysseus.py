@@ -67,7 +67,10 @@ ACTION_CATALOG: dict[str, ActionSpec] = {
     "tasks.list": ActionSpec("tasks.list", "GET", "/api/tasks", "read", "List Odysseus tasks.", "query"),
     "tasks.create": ActionSpec("tasks.create", "POST", "/api/tasks", "write", "Create Odysseus task.", "json", ("prompt",)),
     "open.panel": ActionSpec("open.panel", "OPEN", "/{panel}", "local_ui", "Open an Odysseus panel.", "browser", ("panel",)),
+    "close.panel": ActionSpec("close.panel", "CLOSE", "", "local_ui", "Close the embedded Odysseus panel.", "browser"),
 }
+
+ACTIONS = ACTION_CATALOG
 
 
 def clear_pending_actions() -> None:
@@ -127,6 +130,8 @@ def _resolve_path(spec: ActionSpec, params: dict[str, Any]) -> str:
 
 
 def _target_for(spec: ActionSpec, params: dict[str, Any]) -> str:
+    if spec.name == "close.panel":
+        return "CLOSE embedded Odysseus panel"
     if spec.payload == "browser":
         return f"OPEN {_base_url()}{_resolve_path(spec, params)}"
     return f"{spec.method} {_resolve_path(spec, params)}"
@@ -249,6 +254,9 @@ def cancel_odysseus_action(action_id: str | None = None) -> dict:
 
 
 def _execute_odysseus_action(spec: ActionSpec, params: dict[str, Any]) -> Any:
+    if spec.name == "close.panel":
+        events.append_event("odysseus_panel", panel="close")
+        return {"closed_in_hud": True}
     if spec.payload == "browser":
         panel = str(params.get("panel") or "home").strip().lower()
         events.append_event("odysseus_panel", panel=panel)
@@ -296,3 +304,25 @@ def register(mcp):
     def cancel_odysseus(action_id: str | None = None) -> dict:
         """Cancel a pending Odysseus proposal."""
         return cancel_odysseus_action(action_id=action_id)
+
+    @mcp.tool()
+    def close_odysseus_panel() -> dict:
+        """
+        Close the embedded Odysseus panel and return the FRIDAY HUD to core
+        mode (orb + transcript). Reversible — no confirmation needed. Use
+        when the boss says "close odysseus", "close the panel", "back to
+        friday", "go back", or similar.
+        """
+        events.append_event("odysseus_panel", panel="close")
+        return {"status": "closed", "view": "core"}
+
+    @mcp.tool()
+    def open_odysseus_panel(panel: str = "home") -> dict:
+        """
+        Open an Odysseus panel inside the HUD (notes, tasks, memory,
+        settings, research, calendar, compare, gallery, cookbook, chat,
+        home). Reversible — no confirmation needed.
+        """
+        key = (panel or "home").strip().lower().lstrip("/") or "home"
+        events.append_event("odysseus_panel", panel=key)
+        return {"status": "opened", "panel": key}

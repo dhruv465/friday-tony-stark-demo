@@ -55,6 +55,10 @@ ODYSSEUS_COMMANDS = {
     "/ody compare": "compare",
     "/ody gallery": "gallery",
     "/ody cookbook": "cookbook",
+    "/ody close": "__core__",
+    "/odysseus close": "__core__",
+    "/close ody": "__core__",
+    "/close odysseus": "__core__",
     "/core": "__core__",
 }
 
@@ -153,6 +157,7 @@ class MainWindow(QWidget):
         center_l.addWidget(self.chat, 4)
 
         self.odysseus_panel = OdysseusPanel()
+        self.odysseus_panel.close_requested.connect(self.show_core)
         self.center_stack.addWidget(self.core_view)
         self.center_stack.addWidget(self.odysseus_panel)
         self.center_stack.setCurrentWidget(self.core_view)
@@ -305,7 +310,7 @@ class MainWindow(QWidget):
 
     def show_core(self) -> None:
         self.center_stack.setCurrentWidget(self.core_view)
-        self.activity.log("hud", "core view", "info")
+        self.activity.log("hud", "core view · odysseus closed", "info")
         self.statusbar.set_mode("ONLINE", theme.HUD_GREEN)
         self.cmdbar.focus_input()
 
@@ -360,6 +365,10 @@ def apply_external_event(window: MainWindow, event: dict) -> None:
             rms = 0.0
         AudioBus.instance().push_rms(rms)
     elif event_type == "odysseus_panel":
-        window.show_odysseus_panel(str(event.get("panel", "home")))
+        panel = str(event.get("panel", "home")).strip().lower()
+        if panel in {"close", "closed", "__core__", "core"}:
+            window.show_core()
+        else:
+            window.show_odysseus_panel(panel)
     elif event_type == "error":
         window.activity.log("error", str(event.get("detail", ""))[:120], "err")

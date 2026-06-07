@@ -7,39 +7,27 @@ risky surfaces.
 
 Safety layers, top to bottom:
 
-1. **Argv[0] allowlist.** Only a small set of read-mostly binaries
-   are accepted as the program (`git status`, `ls`, `cat`, `rg`, …).
-   Anything not on the list is rejected before we even look at args.
-   This is the primary defence — a regex denylist was previously the
-   first line of defence, and was bypassable via interpreter shells
-   (`python -c '...'`, `osascript -e '...'`, `bash -c '...'`,
-   `env sh`, `ssh user@host '...'`, …). The allowlist removes that
-   whole class of bypass.
-2. **Argv[0] hard-reject.** A redundant explicit blocklist of
-   interpreters and privilege-escalation tools so that even if the
-   allowlist is widened by a misguided env override, those entries
-   cannot be added.
-3. **Denylist patterns.** Belt-and-suspenders rejection of dangerous
+1. **Confirm gate** — ``confirm_shell_command`` must be called after
+   ``propose_shell_command`` returns ``pending_confirmation``. The
+   boss confirms verbally / textually per his stated UX preference.
+2. **Home cwd** — commands run from ``/Users/dhruvsmac`` by default
+   so FRIDAY can work across the boss's Mac user space. Override with
+   ``FRIDAY_SHELL_CWD``.
+3. **Denylist patterns.** Rejection of dangerous
    *argument* fragments (`rm -rf /`, redirects into block devices,
    command substitution syntax, env-var-prefix injection, etc.).
 4. **Secret pattern reject** — refuses commands whose text looks
    like it's echoing an API key or token (reuses
    ``friday.tools.desktop.SECRET_PATTERNS``).
-5. **Confirm gate** — ``confirm_shell_command`` must be called after
-   ``propose_shell_command`` returns ``pending_confirmation``. The
-   boss confirms verbally / textually per his stated UX preference;
-   for a stronger out-of-band gate set
-   ``FRIDAY_SHELL_REQUIRE_MODAL=1`` (reserved for future UI work).
-6. **Fixed sandbox cwd** — commands run from
-   ``$WORKSPACE_ROOTS[0]/friday-shell`` by default, created on demand.
-   Override with ``FRIDAY_SHELL_CWD``.
-7. **Timeout + capture** — 20s hard timeout, stdout/stderr captured
+5. **Privilege-escalation reject** — sudo/su/doas/pkexec are never
+   allowed.
+6. **Timeout + capture** — 20s hard timeout, stdout/stderr captured
    and truncated to 4 KB each.
 
-This tool is **not** a substitute for a real sandbox. Even with an
-argv[0] allowlist, allowed binaries can still read files the caller
-can read (`cat ~/.ssh/id_rsa`) or write inside the cwd. Treat it as a
-convenience layer with a low blast radius, not as containment.
+This tool is **not** a substitute for a real sandbox. Confirmed commands
+can read and write files the caller can access. Treat
+it as direct local user execution with a confirmation broker, not as
+containment.
 """
 
 from __future__ import annotations
@@ -53,10 +41,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from friday.tools.desktop import (
-    SECRET_PATTERNS,
-    _configured_workspace_roots,
-)
+from friday.tools.desktop import SECRET_PATTERNS
 
 
 PENDING_TTL_SECONDS = 90
@@ -65,10 +50,9 @@ PENDING_SHELL_ACTIONS: dict[str, "PendingShell"] = {}
 DEFAULT_TIMEOUT_S = 20
 MAX_OUTPUT_CHARS = 4000
 
-# Argv[0] allowlist — programs FRIDAY is allowed to invoke. Read-mostly
-# tools the boss would plausibly ask about during normal work. Override
-# via ``FRIDAY_SHELL_ALLOWLIST="git,ls,…"`` if you really mean it; the
-# hard-block list below still applies on top.
+# Optional argv[0] allowlist. By default FRIDAY can stage most programs
+# from /Users/dhruvsmac, but setting FRIDAY_SHELL_REQUIRE_ALLOWLIST=1
+# tightens execution back to this list.
 DEFAULT_ALLOWLIST = frozenset({
     # File / dir inspection
     "ls", "cat", "head", "tail", "wc", "stat", "file", "tree",
@@ -88,18 +72,10 @@ DEFAULT_ALLOWLIST = frozenset({
     "tr", "tee", "column", "jq", "yq",
 })
 
-# Argv[0] hard-block — interpreters, privilege-escalators, remote
-# shells, and anything that can re-launch arbitrary code with its own
-# argument grammar. This wins over the allowlist unconditionally.
-HARD_BLOCKED_PROGS = frozenset({
-    "bash", "sh", "zsh", "ksh", "fish", "dash", "csh", "tcsh",
-    "python", "python2", "python3", "perl", "ruby", "node",
-    "deno", "osascript", "bun", "lua", "php", "groovy",
-    "env", "xargs", "exec", "eval",
+# Argv[0] hard-block for privilege escalation. This wins over optional
+# allowlist settings unconditionally.
+PRIVILEGE_BLOCKED_PROGS = frozenset({
     "sudo", "doas", "pkexec", "su",
-    "ssh", "scp", "sftp", "rsync",
-    "nc", "ncat", "socat", "telnet",
-    "kill", "killall", "pkill",
 })
 
 DENYLIST_PATTERNS = (
@@ -125,17 +101,12 @@ def _effective_allowlist() -> frozenset[str]:
     if not raw:
         return DEFAULT_ALLOWLIST
     parts = {p.strip() for p in raw.split(",") if p.strip()}
-    # Hard-blocked progs can never enter the allowlist via env.
-    return frozenset(parts - HARD_BLOCKED_PROGS)
+    # Privilege escalation can never enter the allowlist via env.
+    return frozenset(parts - PRIVILEGE_BLOCKED_PROGS)
 
 
 def _normalised_prog(argv0: str) -> str:
-    """Return the basename of argv[0], stripped, lowercased.
-
-    Rejects absolute paths and any program containing path separators —
-    we want callers to use the bare program name so the allowlist /
-    blocklist matches survive ``/usr/bin/bash`` vs ``bash`` games.
-    """
+    """Return the basename of argv[0], stripped, lowercased."""
     if not argv0:
         raise ValueError("Empty program.")
     if "/" in argv0 or "\\" in argv0:
@@ -185,10 +156,12 @@ def _reject_denylisted(command: str) -> None:
 
 def _enforce_allowlist(argv0: str) -> str:
     prog = _normalised_prog(argv0)
-    if prog in HARD_BLOCKED_PROGS:
+    if prog in PRIVILEGE_BLOCKED_PROGS:
         raise PermissionError(
-            f"`{prog}` is hard-blocked — interpreters and privilege escalators are never allowed."
+            f"`{prog}` is hard-blocked — privilege escalation is never allowed."
         )
+    if os.getenv("FRIDAY_SHELL_REQUIRE_ALLOWLIST", "").strip().lower() not in {"1", "true", "yes"}:
+        return prog
     allow = _effective_allowlist()
     if prog not in allow:
         raise PermissionError(
@@ -224,23 +197,16 @@ def _truncate(s: str) -> str:
 
 
 def _resolve_cwd() -> str:
-    """Return the shell sandbox directory, creating it if needed.
-
-    Tightened from ``WORKSPACE_ROOTS[0]`` (which can be the user's $HOME)
-    to a dedicated subdir so a wayward `cat * > x` or relative-path
-    write has a very small blast radius. Override with
-    ``FRIDAY_SHELL_CWD``.
-    """
+    """Return the working directory for confirmed shell commands."""
     override = os.getenv("FRIDAY_SHELL_CWD", "").strip()
     if override:
         target = Path(override).expanduser().resolve()
     else:
-        roots = _configured_workspace_roots()
-        target = (roots[0] / "friday-shell").resolve()
+        target = Path("/Users/dhruvsmac").resolve()
     try:
         target.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        raise PermissionError(f"Cannot create shell sandbox dir: {exc}")
+        raise PermissionError(f"Cannot access shell working dir: {exc}")
     return str(target)
 
 

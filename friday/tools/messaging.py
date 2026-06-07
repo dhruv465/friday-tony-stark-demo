@@ -93,8 +93,55 @@ def _prune_expired() -> None:
 def prepare_outbound_message(channel: str, recipient: str, message: str) -> dict:
     normalized_channel = _normalize_channel(channel)
     clean_recipient, clean_message = _validate_message(recipient, message)
+    resolved_recipient = None
+    delivery_recipient = clean_recipient
+    delivery_method = None
+
+    if normalized_channel in {"messages", "whatsapp"} and not _looks_like_direct_handle(clean_recipient):
+        matches = _find_contact_matches(clean_recipient)
+        selectable_matches = matches
+        if normalized_channel == "whatsapp":
+            selectable_matches = [item for item in matches if item["kind"] == "phone"]
+
+        selected = _select_contact_match(clean_recipient, selectable_matches)
+        if selected is None:
+            if selectable_matches:
+                return {
+                    "status": "needs_recipient_clarification",
+                    "recipient": clean_recipient,
+                    "matches": selectable_matches[:5],
+                    "message": "Multiple contacts matched. Ask the user which contact to use.",
+                }
+            if normalized_channel == "whatsapp":
+                delivery_method = "whatsapp_app_search"
+            else:
+                return {
+                    "status": "contact_not_found",
+                    "recipient": clean_recipient,
+                    "matches": [],
+                    "message": "No matching contact found. Ask for a phone number, email, or more specific contact name.",
+                }
+        else:
+            resolved_recipient = selected
+            delivery_recipient = selected["handle"]
+
+    if normalized_channel == "whatsapp" and delivery_method is None:
+        delivery_method = "whatsapp_url" if _digits_and_plus(delivery_recipient) else "whatsapp_app_search"
+
+    if normalized_channel == "messages" and not _looks_like_direct_handle(clean_recipient) and resolved_recipient is None:
+        return {
+            "status": "contact_not_found",
+            "recipient": clean_recipient,
+            "matches": [],
+            "message": "No matching contact found. Ask for a phone number, email, or more specific contact name.",
+        }
+
     action_id = uuid.uuid4().hex
-    summary = f"Send {normalized_channel} message to {clean_recipient}: {clean_message}"
+    recipient_summary = clean_recipient
+    if resolved_recipient is not None:
+        label = resolved_recipient.get("label") or resolved_recipient.get("kind") or "contact"
+        recipient_summary = f"{resolved_recipient['name']} ({label}: {resolved_recipient['handle']})"
+    summary = f"Send {normalized_channel} message to {recipient_summary}: {clean_message}"
     action = PendingAction(
         action_id=action_id,
         summary=summary,
@@ -102,18 +149,24 @@ def prepare_outbound_message(channel: str, recipient: str, message: str) -> dict
         created_at=time.time(),
         payload={
             "channel": normalized_channel,
-            "recipient": clean_recipient,
+            "recipient": delivery_recipient,
+            "requested_recipient": clean_recipient,
+            "resolved_recipient": resolved_recipient,
+            "delivery_method": delivery_method,
             "message": clean_message,
         },
     )
     PENDING_ACTIONS[action_id] = action
-    return {
+    result = {
         "status": "pending_confirmation",
         "action_id": action_id,
         "risk": action.risk,
         "summary": summary,
         "expires_in_seconds": PENDING_TTL_SECONDS,
     }
+    if resolved_recipient is not None:
+        result["resolved_recipient"] = resolved_recipient
+    return result
 
 
 def _latest_pending_action_id() -> str:
@@ -153,7 +206,9 @@ def _execute_message_action(payload: dict) -> str:
     if channel == "messages":
         return _send_apple_message(recipient, message)
     if channel == "whatsapp":
-        return _open_whatsapp_draft(recipient, message)
+        if payload.get("delivery_method") == "whatsapp_app_search":
+            return _send_whatsapp_app_contact(payload.get("requested_recipient") or recipient, message)
+        return _send_whatsapp_url_message(recipient, message)
     if channel == "slack":
         return _open_slack_draft(recipient, message)
     if channel == "email":
@@ -165,37 +220,105 @@ def _looks_like_direct_handle(recipient: str) -> bool:
     return "@" in recipient or bool(_digits_and_plus(recipient))
 
 
-def _lookup_contact_handle(recipient: str) -> str | None:
-    script = f'''
-tell application "Contacts"
-    set targetName to "{_apple_string(recipient)}"
-    set matches to every person whose name contains targetName
-    if (count of matches) is 0 then return ""
+def _contact_row(name: str, kind: str, handle: str, label: str) -> dict:
+    return {
+        "name": name.strip(),
+        "kind": kind.strip() or "contact",
+        "handle": handle.strip(),
+        "label": label.strip(),
+    }
 
+
+def _parse_contact_rows(raw: str) -> list[dict]:
+    matches = []
+    seen = set()
+    for line in raw.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 4:
+            continue
+        item = _contact_row(parts[0], parts[1], parts[2], parts[3])
+        if not item["name"] or not item["handle"]:
+            continue
+        key = (item["name"].lower(), item["handle"].lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        matches.append(item)
+    return matches
+
+
+def _find_contact_matches(recipient: str) -> list[dict]:
+    query = recipient.strip()
+    if not query:
+        return []
+    script = f'''
+set targetName to "{_apple_string(query)}"
+set outputRows to {{}}
+set oldDelimiters to AppleScript's text item delimiters
+
+tell application "Contacts"
+    set matches to every person whose name contains targetName
     repeat with targetPerson in matches
+        set contactName to (name of targetPerson) as text
+
         repeat with targetPhone in phones of targetPerson
-            set phoneLabel to (label of targetPhone) as text
+            set phoneLabel to ""
+            try
+                set phoneLabel to (label of targetPhone) as text
+            end try
             set phoneValue to (value of targetPhone) as text
-            if phoneLabel contains "mobile" or phoneLabel contains "iPhone" then return phoneValue
+            copy (contactName & tab & "phone" & tab & phoneValue & tab & phoneLabel) to end of outputRows
+        end repeat
+
+        repeat with targetEmail in emails of targetPerson
+            set emailLabel to ""
+            try
+                set emailLabel to (label of targetEmail) as text
+            end try
+            set emailValue to (value of targetEmail) as text
+            copy (contactName & tab & "email" & tab & emailValue & tab & emailLabel) to end of outputRows
         end repeat
     end repeat
-
-    repeat with targetPerson in matches
-        if (count of phones of targetPerson) > 0 then return (value of item 1 of phones of targetPerson) as text
-    end repeat
-
-    repeat with targetPerson in matches
-        if (count of emails of targetPerson) > 0 then return (value of item 1 of emails of targetPerson) as text
-    end repeat
-
-    return ""
 end tell
+
+set AppleScript's text item delimiters to linefeed
+set outputText to outputRows as text
+set AppleScript's text item delimiters to oldDelimiters
+return outputText
 '''
     try:
-        handle = _osascript_output(script)
+        return _parse_contact_rows(_osascript_output(script))
     except Exception:
+        return []
+
+
+def _select_contact_match(query: str, matches: list[dict]) -> dict | None:
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
         return None
-    return handle.strip() or None
+
+    normalized_query = query.strip().lower()
+    exact = [item for item in matches if item["name"].strip().lower() == normalized_query]
+    if len(exact) == 1:
+        return exact[0]
+
+    mobile = [
+        item for item in matches
+        if item["kind"] == "phone" and item.get("label", "").strip().lower() in {"mobile", "iphone"}
+    ]
+    unique_names = {item["name"].strip().lower() for item in matches}
+    if len(unique_names) == 1 and len(mobile) == 1:
+        return mobile[0]
+
+    return None
+
+
+def _lookup_contact_handle(recipient: str) -> str | None:
+    match = _select_contact_match(recipient, _find_contact_matches(recipient))
+    if match:
+        return match["handle"]
+    return None
 
 
 def _send_apple_message(recipient: str, message: str) -> str:
@@ -245,7 +368,7 @@ def _digits_and_plus(value: str) -> str:
     return cleaned
 
 
-def _open_whatsapp_draft(recipient: str, message: str) -> str:
+def _send_whatsapp_url_message(recipient: str, message: str) -> str:
     phone = _digits_and_plus(recipient)
     encoded = quote(message)
     if phone:
@@ -253,7 +376,42 @@ def _open_whatsapp_draft(recipient: str, message: str) -> str:
     else:
         url = f"whatsapp://send?text={encoded}"
     webbrowser.open(url)
-    return "Opened WhatsApp draft. Review and send from WhatsApp."
+    try:
+        _whatsapp_press_send()
+        return "Sent through WhatsApp."
+    except Exception as exc:
+        return f"Opened WhatsApp draft. Review and send from WhatsApp. Direct-send error: {exc}"
+
+
+def _whatsapp_press_send() -> None:
+    delay = float(os.getenv("FRIDAY_WHATSAPP_SEND_DELAY", "1.2"))
+    script = f'''
+delay {delay}
+tell application "WhatsApp" to activate
+delay 0.2
+tell application "System Events" to key code 36
+'''
+    _osascript(script)
+
+
+def _send_whatsapp_app_contact(recipient: str, message: str) -> str:
+    script = f'''
+tell application "WhatsApp" to activate
+delay 0.8
+tell application "System Events"
+    keystroke "n" using {{command down}}
+    delay 0.4
+    keystroke "{_apple_string(recipient)}"
+    delay 0.7
+    key code 36
+    delay 0.8
+    keystroke "{_apple_string(message)}"
+    delay 0.2
+    key code 36
+end tell
+'''
+    _osascript(script)
+    return "Sent through WhatsApp app search."
 
 
 def _open_slack_draft(recipient: str, message: str) -> str:

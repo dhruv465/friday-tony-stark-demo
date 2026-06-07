@@ -34,6 +34,7 @@ SLASH_COMMANDS = [
     "/ody memory",
     "/ody settings",
     "/ody research",
+    "/ody close",
     "/core",
     "/help",
     "/clear",

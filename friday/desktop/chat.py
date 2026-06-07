@@ -28,6 +28,9 @@ from PySide6.QtWidgets import (
 from . import theme
 
 
+TRANSCRIPT_MAX_HEIGHT = 150
+TRANSCRIPT_MIN_HEIGHT = 80
+
 _ROLE = {
     "user":      ("boss", "❯", theme.TEXT_USER),
     "assistant": ("fri ", "◂", theme.TEXT_BRIGHT),
@@ -49,14 +52,14 @@ class _Line(QFrame):
         stamp = QLabel(f"[{ts}]")
         stamp.setStyleSheet(
             f"color: {theme.TEXT_FAINT.name()}; "
-            f"font-family: {theme.FONT_HUD}; font-size: 10.5px; "
+            f"font-family: {theme.FONT_HUD}; font-size: 9.5px; "
             f"background: transparent;"
         )
 
         prefix = QLabel(f"{prefix_name} {arrow}")
         prefix.setStyleSheet(
             f"color: {theme.HUD_CYAN.name() if role == 'user' else theme.HUD_ICE.name() if role == 'assistant' else theme.HUD_CYAN_DIM.name()}; "
-            f"font-family: {theme.FONT_HUD}; font-size: 11px; "
+            f"font-family: {theme.FONT_HUD}; font-size: 10px; "
             f"font-weight: 600; letter-spacing: 1px; "
             f"background: transparent;"
         )
@@ -66,13 +69,13 @@ class _Line(QFrame):
         body.setTextInteractionFlags(Qt.TextSelectableByMouse)
         body.setStyleSheet(
             f"color: {body_color.name()}; "
-            f"font-family: {theme.FONT_HUD}; font-size: 12px; "
-            f"line-height: 1.55; background: transparent;"
+            f"font-family: {theme.FONT_HUD}; font-size: 11px; "
+            f"line-height: 1.35; background: transparent;"
         )
 
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(10)
+        row.setSpacing(8)
         row.addWidget(stamp, 0, Qt.AlignTop)
         row.addWidget(prefix, 0, Qt.AlignTop)
         row.addWidget(body, 1)
@@ -91,6 +94,8 @@ class ChatPanel(QWidget):
         super().__init__(parent)
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setObjectName("Transcript")
+        self.setMinimumHeight(TRANSCRIPT_MIN_HEIGHT)
+        self.setMaximumHeight(TRANSCRIPT_MAX_HEIGHT)
         self.setStyleSheet(
             f"#Transcript {{ background: rgba(6,9,13,180); "
             f"border-left: 1px solid rgba(0,180,210,55); "
@@ -98,8 +103,8 @@ class ChatPanel(QWidget):
         )
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 14, 20, 14)
-        outer.setSpacing(8)
+        outer.setContentsMargins(16, 8, 16, 8)
+        outer.setSpacing(4)
 
         header_row = QHBoxLayout()
         header_row.setSpacing(8)
@@ -135,7 +140,7 @@ class ChatPanel(QWidget):
         self._inner.setStyleSheet("background: transparent;")
         self._log = QVBoxLayout(self._inner)
         self._log.setContentsMargins(0, 0, 6, 0)
-        self._log.setSpacing(6)
+        self._log.setSpacing(3)
         self._log.addStretch(1)
         self._scroll.setWidget(self._inner)
         outer.addWidget(self._scroll, 1)

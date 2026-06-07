@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 from urllib.parse import urlparse
 
-from PySide6.QtCore import Qt, QUrl
-from PySide6.QtWidgets import QStackedLayout, QLabel, QWidget
+from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QStackedLayout, QVBoxLayout, QWidget
 
 from . import theme
 
@@ -48,6 +48,8 @@ def odysseus_panel_url(panel: str = "home", base_url: str | None = None) -> str:
 class OdysseusPanel(QWidget):
     """Container around QWebEngineView with a lightweight fallback label."""
 
+    close_requested = Signal()
+
     def __init__(self, parent=None, base_url: str | None = None):
         super().__init__(parent)
         self.base_url = normalize_odysseus_base_url(base_url)
@@ -60,9 +62,50 @@ class OdysseusPanel(QWidget):
             f"border-right: 1px solid rgba(0,180,210,70); }}"
         )
 
-        layout = QStackedLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        chrome = QHBoxLayout()
+        chrome.setContentsMargins(14, 8, 10, 8)
+        chrome.setSpacing(8)
+        title = QLabel("ODYSSEUS")
+        title.setStyleSheet(
+            f"color: {theme.TEXT_FAINT.name()}; font-family: {theme.FONT_HUD}; "
+            "font-size: 10px; font-weight: 700; letter-spacing: 3px; "
+            "background: transparent;"
+        )
+        close = QPushButton("✕  CLOSE")
+        close.setToolTip("Close Odysseus panel · return to FRIDAY core")
+        close.setCursor(Qt.PointingHandCursor)
+        close.setFixedSize(86, 26)
+        close.setStyleSheet(
+            "QPushButton {"
+            f"color: {theme.TEXT_BRIGHT.name()};"
+            "background: rgba(255,70,95,60);"
+            "border: 1px solid rgba(255,70,95,160);"
+            "border-radius: 4px;"
+            f"font-family: {theme.FONT_HUD};"
+            "font-size: 11px;"
+            "font-weight: 700;"
+            "letter-spacing: 1.5px;"
+            "padding: 0 8px;"
+            "}"
+            "QPushButton:hover { background: rgba(255,70,95,110); border-color: rgba(255,70,95,220); }"
+        )
+        close.clicked.connect(self.close_requested.emit)
+        chrome.addWidget(title)
+        chrome.addStretch(1)
+        chrome.addWidget(close)
+        outer.addLayout(chrome)
+
+        body = QWidget(self)
+        body.setAttribute(Qt.WA_StyledBackground, True)
+        body.setStyleSheet("background: transparent;")
+        layout = QStackedLayout(body)
         layout.setContentsMargins(0, 0, 0, 0)
         self._layout = layout
+        outer.addWidget(body, 1)
 
         try:
             from PySide6.QtWebEngineWidgets import QWebEngineView

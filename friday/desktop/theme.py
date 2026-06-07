@@ -49,7 +49,7 @@ TEXT_OK       = QColor(80, 230, 140)
 TEXT_PROMPT   = QColor(0, 229, 255)
 
 # Fonts.
-FONT_HUD      = "Menlo, Monaco, monospace"
+FONT_HUD      = "Menlo, Monaco"
 FONT_MONO     = FONT_HUD
 FONT_BODY     = FONT_HUD
 

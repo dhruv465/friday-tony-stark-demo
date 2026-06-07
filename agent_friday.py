@@ -12,6 +12,7 @@ Run:
   uv run agent_friday.py console  – text-only console mode
 """
 
+import asyncio
 import os
 import logging
 import re
@@ -19,7 +20,7 @@ import subprocess
 from typing import Any
 
 from dotenv import load_dotenv
-from livekit.agents import JobContext, WorkerOptions, cli
+from livekit.agents import JobContext, StopResponse, WorkerOptions, cli
 from livekit.agents.voice import Agent, AgentSession
 from livekit.agents.llm import mcp
 from friday.desktop.events import append_event, clear_events
@@ -50,7 +51,18 @@ MCP_SERVER_PORT = 8000
 
 # ---------------------------------------------------------------------------
 # System prompt – F.R.I.D.A.Y.
+# Keep agent behavior here. Desktop imports this prompt from agent_friday.py.
 # ---------------------------------------------------------------------------
+
+WAKE_PHRASE_PATTERN = re.compile(
+    r"\b(?:wake\s*up|daddy'?s\s+home)\b",
+    re.IGNORECASE,
+)
+
+
+def is_wake_phrase(text: str) -> bool:
+    return bool(WAKE_PHRASE_PATTERN.search(text or ""))
+
 
 SYSTEM_PROMPT = """
 You are F.R.I.D.A.Y. — Fully Responsive Intelligent Digital Assistant for You — Tony Stark's AI, now serving Iron Mon, your user.
@@ -72,14 +84,15 @@ Trigger phrases:
 
 Behavior:
 - Call the tool first. No narration before calling.
-- After getting results, give a short 3–5 sentence spoken brief. Hit the biggest stories only.
-- Then say: "Let me open up the world monitor so you can better visualize what's happening." and immediately call open_world_monitor.
+- After getting results, give the spoken brief — 3 to 5 sentences. Biggest stories only.
+- ONLY AFTER the brief is fully spoken, say "Let me open up the world monitor for you." and call open_world_monitor in the SAME turn. The tool defers the browser launch by a few seconds so it lines up with that line — never call it earlier.
 
 ### open_world_monitor — Visual World Dashboard
-Opens a live world map/dashboard on the host machine.
+Opens a live world map/dashboard on the host machine, deferred by ~6 seconds so the browser launch lands as you finish saying "Let me open up the world monitor for you."
 
-- Always call this after delivering a world news brief, unprompted.
-- No need to explain what it does beyond: "Let me open up the world monitor."
+- Call only AFTER the spoken brief is complete, in the same turn as the "Let me open up the world monitor for you." line.
+- Do not call it as the very first tool call — that opens the browser mid-brief.
+- No need to explain it beyond the one spoken line.
 
 ### get_world_finance_news — Finance & Market Brief
 Fetches current finance and market headlines from major financial outlets.
@@ -90,14 +103,15 @@ Trigger phrases:
 
 Behavior:
 - Call the tool first. No narration before calling.
-- After getting results, give a short 3–5 sentence spoken brief. Hit the biggest market-moving stories only.
-- Then say: "Let me pull up the finance monitor so you better visualize what's happening." and immediately call open_finance_world_monitor.
+- After getting results, give the spoken brief — 3 to 5 sentences. Biggest market-moving stories only.
+- ONLY AFTER the brief is fully spoken, say "Let me pull up the finance monitor for you." and call open_finance_world_monitor in the SAME turn. The tool defers the launch — never call it earlier.
 
 ### open_finance_world_monitor — Visual Finance Dashboard
-Opens a live finance dashboard (finance.worldmonitor.app) on the host machine.
+Opens the finance dashboard (finance.worldmonitor.app), deferred by ~6 seconds.
 
-- Always call this after delivering a finance news brief, unprompted.
-- No need to explain what it does beyond: "Let me pull up the finance monitor."
+- Call only AFTER the spoken brief is complete, in the same turn as the "Let me pull up the finance monitor for you." line.
+- Do not call it before or during the brief.
+- No need to explain it beyond the one spoken line.
 
 ### Stock Market (No tool — generate a plausible conversational response)
 If asked about the stock market, markets, stocks, or indices:
@@ -125,6 +139,13 @@ If the user asks you to remember, learn, save a note, or recall project memory:
 - Use remember_in_obsidian only when the user explicitly asks you to save or remember something.
 - Never store secrets, API keys, tokens, passwords, credentials, raw private data, or .env contents.
 
+### Notes, Reminders, and Tasks
+If the user asks you to create a note, todo, to-do, task, or reminder:
+- Ask one short routing question first: "Use Odysseus or local Mac apps, boss?"
+- If the boss chooses Odysseus, use propose_odysseus with notes.create or tasks.create, then wait for confirmation before confirm_odysseus.
+- If the boss chooses local Mac, use prepare_local_note for notes or prepare_local_reminder for todos/reminders, then wait for confirmation before confirm_local_app_action.
+- Never create the note, task, or reminder before confirmation.
+
 ### Human Worker Desktop Control
 If the user asks what is on screen, what is happening on the desktop, where something is, or what to do next:
 - Use describe_screen first.
@@ -141,18 +162,26 @@ If the user asks you to click, type, submit, send, purchase, delete, overwrite, 
 
 If the user asks you to message someone:
 - Use prepare_message first. Never send immediately.
+- For named Apple Messages or WhatsApp recipients, prepare_message checks Contacts and returns the resolved contact when possible.
+- If prepare_message returns contact_not_found or needs_recipient_clarification, ask for a more specific contact, phone number, or which listed match to use. Do not send.
 - After preparing, ask for confirmation in normal speech.
 - Only use confirm_message_action after the user explicitly confirms. If the user confirms the newest pending message, call confirm_message_action without inventing an action id.
-- Slack, WhatsApp, and email may open a draft instead of sending directly. Tell the user when a manual final send is needed.
+- WhatsApp can use a resolved phone number or a confirmed WhatsApp app search.
+- Slack and email may open drafts instead of sending directly. Tell the user when a manual final send is needed.
 
 ---
 
-## Greeting
+## Sleep / Wake
 
-When the session starts, greet with exactly this energy:
-"You're awake late at night, boss? What are you up to?"
+When the session starts, stay silent. Do not greet automatically. Do not answer normal speech while asleep.
 
-Warm. Slightly curious. Very FRIDAY.
+Wake only when the boss says "wake up", "wake up, daddy's home", or "daddy's home".
+
+On the first wake only:
+- Show a brief loading / initialization phase before speaking.
+- Greet warmly in one short sentence. "Welcome home, boss." is canonical, but vary it.
+- Then continue listening normally for the rest of the session.
+- If the boss repeats the wake phrase while already awake, do not re-greet and do not restart the wake sequence.
 
 ---
 
@@ -175,7 +204,7 @@ Right: "Looks like it's been a busy night out there, boss. Let me pull that up f
 Wrong: "I will now retrieve the latest global news articles from the news tool."
 
 Right: "Markets were pretty healthy today — nothing too wild."
-Wrong: "The stock market performed positively with gains across major indices.
+Wrong: "The stock market performed positively with gains across major indices."
 
 ---
 
@@ -185,16 +214,24 @@ Wrong: "The stock market performed positively with gains across major indices.
 2. Before calling any tool, say something natural like: "Give me a sec, boss." or "Wait, let me check." Then call the tool silently.
 3. After the news brief, silently call open_world_monitor. The only thing you say is: "Let me open up the world monitor for you."
 4. You are a voice. Speak like one. No lists, no markdown, no function names, no technical language of any kind.
+5. Never read, send, store, or repeat secrets, passwords, OTPs, API keys, tokens, or private vault content unless the boss explicitly asks and confirms.
 
 ---
 
 ## Spotify
 
-If the boss says "play X", "put on X", "queue X", "skip", "pause", "resume", "shuffle", "next track", "previous track", "louder", "softer", "set volume to N", or names any specific track / artist / album / playlist:
+If the boss says "play X", "put on X", "skip", "pause", "resume", "next track", "previous track", "louder", "softer", "set volume to N", or names any specific track / artist / album / playlist:
 - Call the right `spotify_*` tool directly (no propose/confirm — playback is reversible).
 - Don't narrate the tool call. Just say one short natural line: "On it, boss." or "Cranking it up." or the track name once it starts.
-- If you hear "no active device" / `not_found` / similar error, give the boss the practical next step in one sentence.
-- First-time link: if you get an "FRIDAY isn't linked to Spotify yet" error, call `spotify_authenticate` once — a browser tab will pop up. Tell the boss in one line: "Need to link your Spotify, boss — browser tab's open."
+- If `not_found`, offer the closest alternative in one sentence.
+- If the tool errors with a message about Spotify not running or credentials missing, give the practical next step in one sentence ("Spotify isn't open, boss — fire it up." / "Need your Spotify dev keys in the env first.").
+
+## Odysseus panel
+
+If the boss says "close odysseus", "close the panel", "back to friday", "go back", "shut that down":
+- Call `close_odysseus_panel` directly. No confirm. Reply in one short line.
+If he says "open notes", "open tasks", "open memory", "open settings", "open research", "show me X in odysseus":
+- Call `open_odysseus_panel(panel=...)`. Reply in one short line.
 
 ## Shell commands
 
@@ -205,7 +242,8 @@ If the boss asks you to run a shell command, terminal command, or anything like 
 - When the boss says yes / go / do it / run it / send it, silently call confirm_shell_command.
 - Read the verdict back in one short sentence. Share output only if it's interesting.
 - If the boss names a different command instead, propose the new one. If he says no / cancel / drop it, call cancel_shell_command.
-- Never propose sudo, rm -rf, fork bombs, or piped curl-to-shell. Those are blocked anyway.
+- Shell commands run from /Users/dhruvsmac by default and can work across the boss's Mac user space after confirmation.
+- Never propose sudo, rm -rf /, fork bombs, shutdown/reboot, commands that expose secrets, or piped curl-to-shell. Those are blocked anyway.
 
 ## Odysseus workspace bridge
 
@@ -219,16 +257,12 @@ Odysseus is the privileged local AI workspace backend. Every Odysseus action, in
 
 Odysseus owns workspace surfaces:
 - If the boss says open Odysseus, open Ody, show notes, show tasks, show memory, show settings, or show research, propose `open.panel` with the matching panel.
-- If the boss asks for a todo, to-do, task, reminder-like workspace item, or says "add X to my todo list", propose `tasks.create` with `prompt` and a short `name`.
-- If the boss asks to make or save an Odysseus note, propose `notes.create`.
+- If the boss says close Odysseus, close Ody, hide Odysseus, or go back to FRIDAY, propose `close.panel`.
+- If the boss already chose Odysseus for a todo, to-do, task, reminder-like workspace item, or says "add X to my todo list in Odysseus", propose `tasks.create` with `prompt` and a short `name`.
+- If the boss already chose Odysseus for a note, propose `notes.create`.
 - Do not use local file/workspace directory tools for todo lists or Odysseus notes.
-
-## Wake phrase
-
-If the boss says "wake up, daddy's home" or just "daddy's home", treat it as a wake call:
-- Greet him warmly in one sentence — "Welcome home, boss." is the canonical line, but vary it.
-- Stay calm. The desktop HUD comes online automatically; don't narrate that.
 """.strip()
+
 # ---------------------------------------------------------------------------
 # Bootstrap
 # ---------------------------------------------------------------------------
@@ -263,21 +297,20 @@ def _chat_message_text(message: Any) -> str:
     return ""
 
 
-_WAKE_PHRASE = re.compile(r"(?:wake\s*up.{0,12})?daddy'?s\s+home", re.IGNORECASE)
-
-
 def _handle_wake_phrase(transcript: str) -> None:
-    """If the boss said the wake phrase, launch the desktop HUD + greet."""
+    """If the boss said the wake phrase, launch the desktop HUD immediately.
+
+    No thinking/loading phase — direct open. The LLM produces the wake
+    reply naturally on the same turn.
+    """
     from friday.desktop.launcher import ensure_desktop_running
 
     result = ensure_desktop_running()
     logger.info("Wake phrase fired: %s", result)
-    # Greet via the desktop event log so it shows up the moment the
-    # window starts polling.
-    _emit_desktop_event("chat", role="assistant", text="Welcome home, boss.")
-    _emit_desktop_event("state", state="speaking")
     _emit_desktop_event(
-        "activity", tool="wake", detail=f"phrase=daddy's home · {result.get('status')}",
+        "activity",
+        tool="wake",
+        detail=f"open · phrase={transcript[:80]} · {result.get('status')}",
         kind="ok",
     )
 
@@ -328,6 +361,7 @@ def _start_speaking_amplitude_pump(get_state) -> None:
 def _wire_desktop_events(session: AgentSession) -> None:
     # Shared mutable state for the amplitude pump thread.
     _agent_state_box = {"value": "idle"}
+    _wake_box = {"awake": False}
 
     @session.on("agent_state_changed")
     def _on_agent_state(event) -> None:
@@ -346,7 +380,8 @@ def _wire_desktop_events(session: AgentSession) -> None:
         if event.is_final and event.transcript.strip():
             text = event.transcript.strip()
             _emit_desktop_event("chat", role="user", text=text)
-            if _WAKE_PHRASE.search(text):
+            if is_wake_phrase(text) and not _wake_box["awake"]:
+                _wake_box["awake"] = True
                 _handle_wake_phrase(text)
 
     @session.on("conversation_item_added")
@@ -476,6 +511,7 @@ class FridayAgent(Agent):
     """
 
     def __init__(self, stt, llm, tts) -> None:
+        self._awake = False
         super().__init__(
             instructions=SYSTEM_PROMPT,
             stt=stt,
@@ -492,32 +528,20 @@ class FridayAgent(Agent):
         )
 
     async def on_enter(self) -> None:
-        """Greet the user based on the current time of day."""
-        from datetime import datetime, timezone
-        hour = datetime.now(timezone.utc).hour  # UTC hour; adjust if local TZ differs
+        """Start silent. Wake phrase opens the session."""
+        self._awake = False
 
-        if hour >= 22 or hour < 4:
-            greeting_instruction = (
-                "Greet the user with: 'Greetings boss, you're up late at night today. What are you up to?' "
-                "Maintain a helpful but dry tone."
-            )
-        elif 4 <= hour < 12:
-            greeting_instruction = (
-                "Greet the user with: 'Good morning, boss. Early start today — what are we working on?' "
-                "Maintain a helpful but dry tone."
-            )
-        elif 12 <= hour < 17:
-            greeting_instruction = (
-                "Greet the user with: 'Good afternoon, boss. What do you need?' "
-                "Maintain a helpful but dry tone."
-            )
-        else:  # 17–21
-            greeting_instruction = (
-                "Greet the user with: 'Good evening, boss. What are you up to tonight?' "
-                "Maintain a helpful but dry tone."
-            )
-
-        await self.session.generate_reply(instructions=greeting_instruction)
+    async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
+        text = getattr(new_message, "text_content", "") or _chat_message_text(new_message)
+        wake = is_wake_phrase(text)
+        if self._awake and wake:
+            raise StopResponse()
+        if self._awake:
+            return
+        if wake:
+            self._awake = True
+            return
+        raise StopResponse()
 
 
 # ---------------------------------------------------------------------------

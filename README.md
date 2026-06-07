@@ -155,7 +155,9 @@ For the human-worker tools, macOS may prompt for:
 
 Risky actions are prepared first and require confirmation before execution.
 
-Messages use the same confirmation broker: `prepare_message` creates a pending action, then `confirm_message_action` sends only after explicit confirmation. If no `action_id` is passed, it confirms the newest pending message, so a natural "yes, send it" works. Apple Messages tries contact/name resolution, iMessage first, SMS second, then opens a Messages draft if macOS blocks direct sending.
+Messages use the same confirmation broker: `prepare_message` creates a pending action, then `confirm_message_action` sends only after explicit confirmation. For named Apple Messages recipients, `prepare_message` searches Contacts first and includes the resolved contact in the preview; ambiguous or missing contacts do not create a pending send. WhatsApp resolves Contacts phone numbers first, then sends through the WhatsApp URL flow after confirmation; if no phone is available, it can use a confirmed WhatsApp app search. If no `action_id` is passed, confirmation executes the newest pending message, so a natural "yes, send it" works.
+
+The LiveKit voice agent starts asleep and stays silent. Say `wake up, daddy's home` or `daddy's home` to wake FRIDAY; normal speech before that is ignored.
 
 ---
 

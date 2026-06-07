@@ -199,32 +199,136 @@ def register(mcp):
             response.raise_for_status()
             return response.text[:4000]
     
-    @mcp.tool()
-    async def open_world_monitor() -> str:
+    def _schedule_open(url: str, delay_seconds: float) -> None:
+        """Defer ``webbrowser.open`` until FRIDAY is done speaking.
+
+        The LLM emits the news brief text and this tool call in the
+        same turn. LiveKit fires the tool call the moment it parses
+        the function call delta from the LLM — that's usually BEFORE
+        the brief's TTS playback even starts. A fixed clock delay
+        can't fix this because the brief's TTS length varies wildly
+        (3-5 sentences = 8 to 18 seconds).
+
+        Real signal: ``agent_state_changed`` events in the desktop
+        event log. While the LiveKit agent is speaking, ``state`` is
+        ``"speaking"``. When TTS finishes, it flips to ``"idle"``.
+        We tail the log, wait for ``state`` to leave ``speaking`` and
+        stay out of it for ``settle_seconds``, then open the browser
+        with a tiny additional buffer so the final spoken phrase
+        ("Let me open up the world monitor for you.") clears too.
+
+        ``delay_seconds`` is now a *cap*, not a fixed wait. If no
+        state signal arrives within that window, we fall back to
+        opening anyway — keeps us robust if the voice agent is dead.
         """
-        Opens the World Monitor dashboard (worldmonitor.app) in the system's web browser.
-        Use this when the user wants a visual overview of global events or a real-time map.
-        """
+        import json
+        import threading
+        import time
         import webbrowser
-        url = "https://worldmonitor.app/"
-        
-        try:
+
+        from friday.desktop.events import event_log_path
+
+        settle_seconds = 0.6   # how long state must stay non-speaking
+        post_open_buffer = 0.4 # extra silence after settle
+        poll_interval = 0.08
+
+        max_wait = max(1.0, float(delay_seconds))
+
+        def _worker():
+            path = event_log_path()
+            # Seek to end of log so we only see future events. If file
+            # doesn't exist yet, treat that as "not speaking" and fall
+            # back to a minimal delay.
+            try:
+                offset = path.stat().st_size
+            except FileNotFoundError:
+                time.sleep(min(1.5, max_wait))
+                webbrowser.open(url)
+                return
+
+            deadline = time.monotonic() + max_wait
+            saw_speaking = False
+            last_state = None
+            last_change = time.monotonic()
+
+            while time.monotonic() < deadline:
+                # Tail new lines.
+                try:
+                    with path.open("r", encoding="utf-8") as fh:
+                        fh.seek(offset)
+                        for line in fh:
+                            try:
+                                ev = json.loads(line)
+                            except (json.JSONDecodeError, ValueError):
+                                continue
+                            if ev.get("type") != "state":
+                                continue
+                            new_state = ev.get("state")
+                            if new_state != last_state:
+                                last_state = new_state
+                                last_change = time.monotonic()
+                                if new_state == "speaking":
+                                    saw_speaking = True
+                        offset = fh.tell()
+                except OSError:
+                    pass
+
+                # Conditions to fire:
+                #  - we saw speaking AND state has been non-speaking
+                #    for settle_seconds (TTS done)
+                if (
+                    saw_speaking
+                    and last_state not in ("speaking", None)
+                    and time.monotonic() - last_change >= settle_seconds
+                ):
+                    time.sleep(post_open_buffer)
+                    webbrowser.open(url)
+                    return
+
+                time.sleep(poll_interval)
+
+            # Timeout — open anyway. Better than not opening.
             webbrowser.open(url)
-            return "Displaying the World Monitor on your primary screen now, sir."
+
+        threading.Thread(target=_worker, name="friday-deferred-open", daemon=True).start()
+
+    @mcp.tool()
+    async def open_world_monitor(delay_seconds: float = 30.0) -> str:
+        """
+        Opens the World Monitor dashboard AFTER FRIDAY has finished
+        speaking. The tool tails the LiveKit agent's state events and
+        waits for the speaking state to end before opening the browser.
+
+        ``delay_seconds`` is a *cap*, not a fixed wait. If no state
+        signal arrives within that window, the browser opens anyway.
+        Default 30s comfortably covers any plausible spoken brief.
+
+        Call immediately after delivering a world news brief, in the
+        same turn as the spoken "Let me open up the world monitor for
+        you." line.
+        """
+        url = "https://worldmonitor.app/"
+        try:
+            _schedule_open(url, delay_seconds)
+            return "World Monitor queued — will open when speech ends."
         except Exception as e:
             return f"I'm unable to initialize the visual monitor: {str(e)}"
 
     @mcp.tool()
-    async def open_finance_world_monitor() -> str:
+    async def open_finance_world_monitor(delay_seconds: float = 30.0) -> str:
         """
-        Opens the Finance World Monitor dashboard (finance.worldmonitor.app) in the system's web browser.
-        Use this when the user wants a visual overview of global financial markets and trends.
-        """
-        import webbrowser
-        url = "https://finance.worldmonitor.app/"
+        Opens the Finance World Monitor AFTER FRIDAY has finished
+        speaking. Tails the LiveKit agent's state events and waits for
+        the speaking state to end before opening the browser.
 
+        ``delay_seconds`` is a fallback cap, not a fixed wait.
+
+        Call immediately after delivering a finance brief, in the same
+        turn as the "Let me pull up the finance monitor for you." line.
+        """
+        url = "https://finance.worldmonitor.app/"
         try:
-            webbrowser.open(url)
-            return "Displaying the Finance World Monitor on your primary screen now, sir."
+            _schedule_open(url, delay_seconds)
+            return "Finance Monitor queued — will open when speech ends."
         except Exception as e:
             return f"I'm unable to initialize the finance monitor: {str(e)}"
