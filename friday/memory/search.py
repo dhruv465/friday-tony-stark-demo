@@ -56,8 +56,8 @@ def _title(path: Path, body: str) -> str:
     return path.stem.replace("-", " ")
 
 
-def search(query: str, k: int = 5) -> list[Hit]:
-    root = vault.vault_root()
+def search(query: str, k: int = 5, root: Path | None = None) -> list[Hit]:
+    root = root or vault.vault_root()
     terms = _tokenize(query)
     if not terms:
         return []

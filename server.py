@@ -3,11 +3,29 @@ Friday MCP Server — Entry Point
 Run with: python server.py
 """
 
+import logging
+from contextlib import asynccontextmanager
+
 from mcp.server.fastmcp import FastMCP
 from friday.tools import register_all_tools
 from friday.prompts import register_all_prompts
 from friday.resources import register_all_resources
 from friday.config import config
+
+
+@asynccontextmanager
+async def _lifespan(app):
+    # Pick learning jobs left running by a previous server process back up.
+    try:
+        from friday.learning.engine import LearningRuntime
+
+        resumed = LearningRuntime.instance().resume_in_progress()
+        if resumed:
+            logging.getLogger("friday").info("Resumed learning jobs: %s", resumed)
+    except Exception as exc:
+        logging.getLogger("friday").warning("Learning resume skipped: %s", exc)
+    yield {}
+
 
 # Create the MCP server instance
 mcp = FastMCP(
@@ -17,6 +35,7 @@ mcp = FastMCP(
         "You have access to a set of tools to help the user. "
         "Be concise, accurate, and a little witty."
     ),
+    lifespan=_lifespan,
 )
 
 # Register tools, prompts, and resources

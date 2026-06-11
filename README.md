@@ -142,6 +142,14 @@ Copy `.env.example` → `.env` and fill in the values below.
 | `FRIDAY_DESKTOP_EVENT_LOG` | optional | Defaults to `/tmp/friday-desktop-events.jsonl`; live bridge between voice agent and desktop UI |
 | `SUPABASE_URL` | optional | [supabase.com](https://supabase.com) — for the ticketing tool |
 | `SUPABASE_API_KEY` | optional | Supabase project → API settings |
+| `FRIDAY_PERSONA_NAME` / `FRIDAY_PERSONA_BOSS` | optional | Rebrand the assistant persona (FRIDAY/Stark naming is Marvel IP — change before public deployments) |
+| `FRIDAY_TRUST_DEFAULT_MINUTES` | optional | Trust-mode arm window when no duration is spoken (default 30, max 240) |
+| `FRIDAY_SUBAGENT_MODEL` | optional | LLM for background agents (default `gpt-4o-mini`) |
+| `FRIDAY_EXECUTOR_MAX_STEPS_QUICK` / `FRIDAY_EXECUTOR_MAX_STEPS_DEEP` | optional | Step budgets for quick (15) and deep (40) agent jobs |
+| `FRIDAY_EXECUTOR_FILE_ROOTS` | optional | Comma-separated extra folders agents may read/write besides their own workspace |
+| `FRIDAY_EXECUTOR_PAUSE_MAX_S` | optional | How long a paused agent waits for trust mode to be re-armed (default 600s) |
+| `FRIDAY_SCHEDULER_TICK_S` | optional | Scheduler poll interval for delayed/recurring agents (default 30s) |
+| `FRIDAY_KNOWLEDGE_DIR` | optional | Folder for learning jobs, agent workspaces, and trust state (default `~/.friday/knowledge`) |
 
 ---
 
@@ -170,6 +178,37 @@ uv run friday_desktop
 ```
 
 This opens a local FRIDAY window with animated orb, transcript, text input, and tool-call activity feed. It works standalone, and also mirrors the live voice agent when `uv run friday_voice` is running.
+
+---
+
+## Trust mode & background agents
+
+Friday v2 turns the assistant into a permissioned executor:
+
+- **Trust mode** — say *"trust mode on"* and Tier 1 actions (shell commands,
+  notes/reminders, deploying agents) run immediately instead of asking for
+  per-action confirmation. It auto-expires (default 30 min) and *"trust mode
+  off"* disarms instantly. Hard floor: messaging other people, email, and
+  security remediation **always** require explicit confirmation, even armed.
+  All shell hardening (denylist, no sudo, no pipes/chaining) still applies —
+  trust mode skips the confirmation round-trip, never the validation.
+- **Background agents** — *"create an agent to compare X and Y"* deploys a
+  worker that researches in the background and leaves a markdown report.
+  Agents deployed while trust mode is armed also get hands: `run_shell`,
+  workspace file writes, Apple notes/reminders, and message *staging* (sends
+  still need your spoken yes). If trust expires mid-job the agent pauses and
+  waits for re-arm.
+- **Scheduling & monitors** — *"do this at 6pm"* parks a one-shot job;
+  *"keep an eye on X, check every hour"* creates a recurring monitor that
+  re-runs, diffs its report against the previous run, and only notifies
+  (HUD + macOS notification + spoken on next interaction) when something
+  actually changed.
+- **Learning from outcomes** — every finished job writes a searchable outcome
+  note; future agents with similar tasks get those lessons injected into
+  their prompt.
+
+Agent state lives under `FRIDAY_KNOWLEDGE_DIR/_agents/<slug>/` (report,
+workspace, outcome note); trust state under `_trust/state.json`.
 
 ---
 
@@ -225,4 +264,4 @@ The MCP server will pick it up on next start.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

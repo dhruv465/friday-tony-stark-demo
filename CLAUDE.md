@@ -21,7 +21,21 @@ uv run friday_voice      # Terminal 2 — LiveKit voice agent (dev mode, auto-in
 - `friday` → `server:main` (declared in `pyproject.toml [project.scripts]`).
 - `friday_voice` → `agent_friday:dev`, which injects `dev` into `sys.argv` if missing and forwards to LiveKit's `cli.run_app`. To run a different LiveKit subcommand, call `uv run agent_friday.py <subcommand>` directly (e.g. `console` for text-only).
 
-There is no test suite, linter, or build step configured. `main.py` is an unused "hello" stub — not wired to any console script.
+Tests (unittest, no pytest installed):
+
+```bash
+uv run python -m unittest discover -s tests
+```
+
+There is no linter or build step configured. `main.py` is an unused "hello" stub — not wired to any console script.
+
+## Friday v2: trust mode + executor
+
+- **Trust mode** (`friday/security/trust.py`): session permission gate, disk state at `<FRIDAY_KNOWLEDGE_DIR>/_trust/state.json`. Armed via `enable_trust_mode` (boss-only, auto-expires). Tier 1 brokers (`shell.py`, `local_apps.py`, `subagents.py`) call `trust.trusted_short_circuit(...)` after staging to skip confirmation while armed. Tier 2 (messaging, security remediation) never consults trust — keep it that way.
+- **Executor** (`friday/agents/runtime.py`): background worker agents with a tiered tool registry. Untrusted jobs: research tools only. Jobs deployed under trust also get `run_shell` (through the shell broker's validation), scoped `write_file`, notes/reminders, and Tier 2 `send_message` which only stages. Trust expiry mid-job → `paused_awaiting_trust`, resumes on re-arm.
+- **Scheduler**: job records carry `schedule` (`{"at": iso}` one-shot or `{"every_minutes": n}` monitor); a tick loop inside `SubagentRuntime` launches due jobs. Monitors diff reports via LLM and notify only on change (`check_agent_news` tool surfaces pending notifies to the voice agent).
+- **Learning hooks**: finished jobs write `outcome.md` next to their report; new jobs get matching outcome notes injected as "lessons" into the worker prompt.
+- **Persona**: `FRIDAY_PERSONA_NAME` / `FRIDAY_PERSONA_BOSS` env rebrand `SYSTEM_PROMPT` and worker prompts (Marvel IP — required before public deployment).
 
 ## Required env (.env)
 

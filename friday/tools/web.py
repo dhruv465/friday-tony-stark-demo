@@ -48,6 +48,32 @@ def _parse_ddg_html(html: str, limit: int) -> list[tuple[str, str, str]]:
             out.append((title, link, snippet))
     return out
 
+async def ddg_search_raw(query: str, max_results: int = 6) -> list[tuple[str, str, str]]:
+    """Return (title, link, snippet) triples from DuckDuckGo's HTML endpoint.
+
+    Module-level so the learning engine can consume structured results;
+    ``search_web`` formats these for the voice agent. Raises httpx errors.
+    """
+    max_results = max(1, min(max_results, 15))
+    async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+        response = await client.post(
+            "https://html.duckduckgo.com/html/",
+            data={"q": query},
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+        )
+        response.raise_for_status()
+        html = response.text
+    return _parse_ddg_html(html, max_results)
+
+
 SEED_FEEDS = [
     'https://feeds.bbci.co.uk/news/world/rss.xml',
     'https://www.cnbc.com/id/100727362/device/rss/rss.html',
@@ -158,28 +184,11 @@ def register(mcp):
         Search the web and return the top results (title, URL, snippet).
         Uses DuckDuckGo's HTML endpoint, so no search API key is required.
         """
-        max_results = max(1, min(max_results, 15))
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
-                response = await client.post(
-                    "https://html.duckduckgo.com/html/",
-                    data={"q": query},
-                    headers={
-                        "User-Agent": (
-                            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                            "AppleWebKit/537.36 (KHTML, like Gecko) "
-                            "Chrome/124.0.0.0 Safari/537.36"
-                        ),
-                        "Accept": "text/html,application/xhtml+xml",
-                        "Accept-Language": "en-US,en;q=0.9",
-                    },
-                )
-                response.raise_for_status()
-                html = response.text
+            results = await ddg_search_raw(query, max_results)
         except Exception as exc:
             return f"Web grid's unreachable right now, boss: {exc}"
 
-        results = _parse_ddg_html(html, max_results)
         if not results:
             return f"No results came back for {query!r}, boss."
 

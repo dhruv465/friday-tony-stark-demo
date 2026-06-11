@@ -10,7 +10,7 @@ Safety layers, top to bottom:
 1. **Confirm gate** — ``confirm_shell_command`` must be called after
    ``propose_shell_command`` returns ``pending_confirmation``. The
    boss confirms verbally / textually per his stated UX preference.
-2. **Home cwd** — commands run from ``/Users/dhruvsmac`` by default
+2. **Home cwd** — commands run from the user's home folder by default
    so FRIDAY can work across the boss's Mac user space. Override with
    ``FRIDAY_SHELL_CWD``.
 3. **Denylist patterns.** Rejection of dangerous
@@ -41,6 +41,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from friday.security import trust
 from friday.tools.desktop import SECRET_PATTERNS
 
 
@@ -202,7 +203,7 @@ def _resolve_cwd() -> str:
     if override:
         target = Path(override).expanduser().resolve()
     else:
-        target = Path("/Users/dhruvsmac").resolve()
+        target = Path.home().resolve()
     try:
         target.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -235,6 +236,13 @@ def propose_shell(command: str, reason: str = "") -> dict:
         reason=reason.strip(),
         created_at=time.time(),
     )
+    # Tier 1: trust mode runs the validated command immediately. The
+    # denylist / allowlist / secret gates above already ran — trust mode
+    # never widens WHAT can run, only skips the confirm round-trip.
+    trusted = trust.trusted_short_circuit(confirm_shell, action_id)
+    if trusted is not None:
+        return trusted
+
     return {
         "status": "pending_confirmation",
         "action_id": action_id,

@@ -7,6 +7,7 @@ import time
 import uuid
 from dataclasses import dataclass
 
+from friday.security import trust
 from friday.tools.desktop import _reject_secret_content
 
 
@@ -28,7 +29,42 @@ def clear_pending_local_app_actions() -> None:
 
 
 def _apple_string(value: str) -> str:
-    return value.replace("\\", "\\\\").replace('"', '\\"')
+    """Quote-safe AppleScript string literal body.
+
+    Escapes the four characters that can break out of a `"..."` AppleScript
+    string literal: backslash, double-quote, newline, carriage-return. After
+    escaping, rejects any remaining non-printable control bytes (other than
+    horizontal tab) so caller-supplied strings can never inject arbitrary
+    AppleScript statements.
+
+    Threat model: ``payload["title"]`` / ``payload["body"]`` / ``payload
+    ["notes"]`` etc. all flow into a `set X to "..."` line in the
+    AppleScript we hand to ``osascript -e``. Without newline escaping the
+    string `Hi"\nwith timeout of 1 seconds\ntell app "System Events" to ...`
+    would terminate the literal and begin a new statement.
+    """
+    if value is None:
+        return ""
+    # Order matters: escape backslash FIRST so subsequent escapes' own
+    # backslashes are preserved, not doubled.
+    escaped = (
+        value.replace("\\", "\\\\")
+             .replace('"', '\\"')
+             .replace("\n", "\\n")
+             .replace("\r", "\\r")
+    )
+    for ch in escaped:
+        # Allow normal printable chars + tab. Reject the rest — including
+        # NUL, DEL, and the C1 control range — so we don't smuggle anything
+        # past `osascript` via an unexpected byte.
+        if ch == "\t":
+            continue
+        code = ord(ch)
+        if code < 0x20 or code == 0x7F:
+            raise ValueError(
+                "Refusing AppleScript string with non-printable control character."
+            )
+    return escaped
 
 
 def _osascript(script: str) -> subprocess.CompletedProcess:
@@ -70,6 +106,12 @@ def _stage(kind: str, summary: str, payload: dict) -> dict:
         created_at=time.time(),
         payload=payload,
     )
+    # Tier 1: notes/reminders on the boss's own Mac — trust mode skips
+    # the confirm round-trip. Payload sanitization already ran.
+    trusted = trust.trusted_short_circuit(confirm_local_app_action, action_id)
+    if trusted is not None:
+        return trusted
+
     return {
         "status": "pending_confirmation",
         "action_id": action_id,

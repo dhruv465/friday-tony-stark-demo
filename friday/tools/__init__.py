@@ -6,13 +6,17 @@ Add new tool modules here as you build them.
 from friday.tools import (
     desktop,
     diagnostics,
+    hud,
+    learning,
     local_apps,
     mac_worker,
     memory,
     messaging,
     odysseus,
+    security,
     shell,
     spotify,
+    subagents,
     web,
     system,
     utils,
@@ -33,3 +37,7 @@ def register_all_tools(mcp):
     odysseus.register(mcp)
     shell.register(mcp)
     spotify.register(mcp)
+    learning.register(mcp)
+    security.register(mcp)
+    subagents.register(mcp)
+    hud.register(mcp)

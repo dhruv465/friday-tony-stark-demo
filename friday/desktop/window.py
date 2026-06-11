@@ -31,14 +31,26 @@ from . import theme
 from .activity import ActivityFeed
 from .audio_bus import AudioBus
 from .brain import Brain
+from .camera import CameraPanel
 from .chat import ChatPanel
 from .commandbar import CommandBar
 from .events import read_events_since
+from .ops import OpsPanel, OpsRail
 from .orb import Orb
 from .odysseus_panel import OdysseusPanel
 from .scanlines import GridBackground, ScanlineOverlay
 from .statusbar import StatusBar
 from .sysrail import SystemRail
+
+
+HUD_COMMANDS = {
+    "/cam": "camera",
+    "/camera": "camera",
+    "/ops": "ops",
+    "/cam close": "__core__",
+    "/camera close": "__core__",
+    "/ops close": "__core__",
+}
 
 
 ODYSSEUS_COMMANDS = {
@@ -158,15 +170,32 @@ class MainWindow(QWidget):
 
         self.odysseus_panel = OdysseusPanel()
         self.odysseus_panel.close_requested.connect(self.show_core)
+        self.camera_panel = CameraPanel()
+        self.camera_panel.close_requested.connect(self.show_core)
+        self.ops_panel = OpsPanel()
+        self.ops_panel.close_requested.connect(self.show_core)
         self.center_stack.addWidget(self.core_view)
         self.center_stack.addWidget(self.odysseus_panel)
+        self.center_stack.addWidget(self.camera_panel)
+        self.center_stack.addWidget(self.ops_panel)
         self.center_stack.setCurrentWidget(self.core_view)
 
         mid_l.addWidget(self.center_stack, 1)
 
-        # Right rail — activity log.
+        # Right column — ops tiles above the activity log.
+        right_col = QWidget()
+        right_col.setAttribute(Qt.WA_TranslucentBackground, True)
+        right_l = QVBoxLayout(right_col)
+        right_l.setContentsMargins(0, 0, 0, 0)
+        right_l.setSpacing(0)
+        self.opsrail = OpsRail()
+        self.opsrail.camera_requested.connect(self.show_camera_view)
+        self.opsrail.ops_requested.connect(self.show_ops_view)
+        self.camera_panel.state_changed.connect(self.opsrail.set_camera_state)
+        right_l.addWidget(self.opsrail, 0)
         self.activity = ActivityFeed()
-        mid_l.addWidget(self.activity, 0)
+        right_l.addWidget(self.activity, 1)
+        mid_l.addWidget(right_col, 0)
 
         shell_layout.addWidget(middle, 1)
 
@@ -278,6 +307,16 @@ class MainWindow(QWidget):
             self.chat.set_enabled_input(False)
 
     def _on_user_submit(self, text: str) -> None:
+        hud_panel = HUD_COMMANDS.get(" ".join((text or "").strip().lower().split()))
+        if hud_panel == "__core__":
+            self.show_core()
+            return
+        if hud_panel == "camera":
+            self.show_camera_view()
+            return
+        if hud_panel == "ops":
+            self.show_ops_view()
+            return
         panel = parse_odysseus_command(text)
         if panel == "__core__":
             self.show_core()
@@ -309,10 +348,24 @@ class MainWindow(QWidget):
             self._on_state("idle")
 
     def show_core(self) -> None:
+        # Privacy first: leaving the camera view always turns the camera off.
+        if self.camera_panel.is_live:
+            self.camera_panel.stop()
         self.center_stack.setCurrentWidget(self.core_view)
         self.activity.log("hud", "core view · odysseus closed", "info")
         self.statusbar.set_mode("ONLINE", theme.HUD_GREEN)
         self.cmdbar.focus_input()
+
+    def show_camera_view(self) -> None:
+        self.center_stack.setCurrentWidget(self.camera_panel)
+        self.camera_panel.start()
+        self.activity.log("hud", "camera view", "ok")
+        self.statusbar.set_mode("CAMERA", theme.HUD_ICE)
+
+    def show_ops_view(self) -> None:
+        self.center_stack.setCurrentWidget(self.ops_panel)
+        self.activity.log("hud", "ops view", "ok")
+        self.statusbar.set_mode("OPS", theme.HUD_ICE)
 
     def show_odysseus_panel(self, panel: str = "home") -> None:
         try:
@@ -370,5 +423,18 @@ def apply_external_event(window: MainWindow, event: dict) -> None:
             window.show_core()
         else:
             window.show_odysseus_panel(panel)
+    elif event_type == "hud_panel":
+        panel = str(event.get("panel", "core")).strip().lower()
+        if panel == "camera":
+            window.show_camera_view()
+        elif panel == "ops":
+            window.show_ops_view()
+        else:
+            window.show_core()
+    elif event_type == "camera":
+        if str(event.get("action", "")) == "snapshot":
+            path = str(event.get("path", "")).strip()
+            if path:
+                window.camera_panel.capture_to(path)
     elif event_type == "error":
         window.activity.log("error", str(event.get("detail", ""))[:120], "err")
