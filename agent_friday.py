@@ -417,6 +417,54 @@ def _handle_wake_phrase(transcript: str) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Memory intelligence hooks (context injection, capture, reflection)
+# ---------------------------------------------------------------------------
+
+_turn_counter = {"n": 0}
+
+
+def _recent_turns(turn_ctx, limit: int = 14) -> list[str]:
+    """Best-effort transcript lines from the LiveKit ChatContext."""
+    lines: list[str] = []
+    try:
+        for item in list(getattr(turn_ctx, "items", []))[-limit:]:
+            role = getattr(item, "role", "")
+            text = _chat_message_text(item)
+            if role and text:
+                lines.append(f"[{role}]: {text}")
+    except Exception:
+        pass
+    return lines
+
+
+def _inject_memory_context(turn_ctx, user_text: str) -> None:
+    """Pre-search + profile + events block, added as an assistant-side
+    context message. Must never break the voice path."""
+    try:
+        from friday.memory import context as memory_context
+
+        block = memory_context.build_block(user_text)
+        if block:
+            turn_ctx.add_message(role="assistant", content=block)
+    except Exception as exc:
+        logger.debug("memory context injection skipped: %s", exc)
+
+
+def _capture_and_maybe_reflect(turn_ctx, user_text: str) -> None:
+    """Instant preference capture every turn; reflection every Nth."""
+    try:
+        from friday.memory import feedback, reflect
+
+        feedback.detect_and_save(user_text)
+        _turn_counter["n"] += 1
+        if _turn_counter["n"] % reflect.reflect_every() == 0:
+            transcript = _recent_turns(turn_ctx)
+            asyncio.create_task(reflect.run(transcript))
+    except Exception as exc:
+        logger.debug("preference capture skipped: %s", exc)
+
+
 def _start_speaking_amplitude_pump(get_state) -> None:
     """Emit ``audio`` events at ~30 Hz while the agent is speaking.
 
@@ -639,6 +687,8 @@ class FridayAgent(Agent):
         if self._awake and wake:
             raise StopResponse()
         if self._awake:
+            _inject_memory_context(turn_ctx, text)
+            _capture_and_maybe_reflect(turn_ctx, text)
             return
         if wake:
             self._awake = True
