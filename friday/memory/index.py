@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -21,6 +22,7 @@ logger = logging.getLogger("friday.memory.index")
 _SKIP_PARTS_PREFIX = ("_", ".")
 _STALE_INTERVAL_S = 60.0
 _last_reindex_ts = 0.0
+_reindex_lock = threading.Lock()
 
 
 def _knowledge_dir() -> Path:
@@ -99,13 +101,19 @@ def reindex(vault_dir: Path | None = None, knowledge_dir: Path | None = None) ->
 
 
 def reindex_if_stale() -> None:
-    """Throttled reindex — at most once per minute, never raises."""
+    """Throttled reindex — at most once per minute, never raises. The
+    timestamp only advances on success so a transient failure (missing
+    DB, bad vault path) retries on the next call instead of going
+    silent for a full interval."""
     global _last_reindex_ts
     now = time.time()
     if now - _last_reindex_ts < _STALE_INTERVAL_S:
         return
-    _last_reindex_ts = now
-    try:
-        reindex()
-    except Exception as exc:
-        logger.debug("reindex skipped: %s", exc)
+    with _reindex_lock:
+        if now - _last_reindex_ts < _STALE_INTERVAL_S:
+            return
+        try:
+            reindex()
+            _last_reindex_ts = time.time()
+        except Exception as exc:
+            logger.warning("reindex failed: %s", exc)

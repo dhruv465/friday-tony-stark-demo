@@ -69,8 +69,8 @@ class MemoryIndexTests(unittest.TestCase):
     def test_modified_file_is_reindexed_and_deleted_file_removed(self):
         self._reindex()
         note = self.vault_dir / "Facts" / "coffee.md"
-        time.sleep(0.01)
         note.write_text("# Coffee preference\n\nSwitched to espresso.\n", encoding="utf-8")
+        # Force mtime forward so the diff survives coarse-resolution filesystems.
         os.utime(note, (time.time() + 5, time.time() + 5))
         (self.knowledge_dir / "topic.md").unlink()
         stats = self._reindex()
@@ -78,6 +78,15 @@ class MemoryIndexTests(unittest.TestCase):
         self.assertEqual(stats["removed"], 1)
         paths = self._fts_paths()
         self.assertNotIn("knowledge:topic.md", paths)
+
+    def test_reindex_if_stale_throttles_second_call(self):
+        from friday.memory import index
+
+        index._last_reindex_ts = 0.0
+        with patch.object(index, "reindex") as fake:
+            index.reindex_if_stale()
+            index.reindex_if_stale()
+        self.assertEqual(fake.call_count, 1)
 
 
 if __name__ == "__main__":
