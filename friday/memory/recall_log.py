@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 from pathlib import Path
 
 from friday.memory import db
@@ -67,26 +68,33 @@ def _track(hits, query: str) -> None:
             score = float(hit.score or 0.0)
             row = conn.execute("SELECT * FROM recall_log WHERE key = ?", (key,)).fetchone()
             if row is None:
-                conn.execute(
-                    """INSERT INTO recall_log
-                    (key, snippet, recall_count, daily_count, total_score, max_score,
-                     first_recalled_at, last_recalled_at, query_hashes, recall_days,
-                     concept_tags)
-                    VALUES (?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        key, (hit.snippet or "")[:300], score, score, now_iso, now_iso,
-                        json.dumps([qhash]), json.dumps([today]),
-                        json.dumps(_concept_tags(key, hit.snippet or "")),
-                    ),
-                )
-                continue
+                try:
+                    conn.execute(
+                        """INSERT INTO recall_log
+                        (key, snippet, recall_count, daily_count, total_score, max_score,
+                         first_recalled_at, last_recalled_at, query_hashes, recall_days,
+                         concept_tags)
+                        VALUES (?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            key, (hit.snippet or "")[:300], score, score, now_iso, now_iso,
+                            json.dumps([qhash]), json.dumps([today]),
+                            json.dumps(_concept_tags(key, hit.snippet or "")),
+                        ),
+                    )
+                    continue
+                except sqlite3.IntegrityError:
+                    # Another writer inserted this key first — update it instead.
+                    row = conn.execute(
+                        "SELECT * FROM recall_log WHERE key = ?", (key,)
+                    ).fetchone()
             query_hashes = json.loads(row["query_hashes"] or "[]")
             recall_days = json.loads(row["recall_days"] or "[]")
-            if qhash not in query_hashes:
+            if qhash not in query_hashes and len(query_hashes) < 20:
                 query_hashes.append(qhash)
             daily_count = row["daily_count"]
             if today not in recall_days:
-                recall_days.append(today)
+                if len(recall_days) < 30:
+                    recall_days.append(today)
                 daily_count += 1
             conn.execute(
                 """UPDATE recall_log SET recall_count = recall_count + 1,
@@ -120,7 +128,7 @@ def evaluate_candidate(entry: dict) -> dict:
         "frequency": _clamp(recall_count / 8.0),
         "relevance": _clamp(total_score / signal_count),
         "diversity": _clamp(len(set(query_hashes)) / 5.0),
-        "recency": 1.0,
+        "recency": 1.0,  # TODO: time-decay — every candidate counts as fresh for now
         "consolidation": consolidation,
         "conceptual": _clamp(len(set(concept_tags)) / 6.0),
     }
@@ -143,9 +151,11 @@ def promote(vault_dir: Path | None = None) -> list[dict]:
     promoted: list[dict] = []
     now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
     try:
+        # Ledger is pruned to _MAX_ENTRIES, so evaluating every unpromoted
+        # row is cheap — a max_score pre-filter would starve exactly the
+        # frequent, multi-day memories this mechanic exists to surface.
         rows = conn.execute(
-            "SELECT * FROM recall_log WHERE promoted_at IS NULL "
-            "ORDER BY max_score DESC LIMIT 20"
+            "SELECT * FROM recall_log WHERE promoted_at IS NULL"
         ).fetchall()
         for row in rows:
             entry = {
@@ -167,8 +177,8 @@ def promote(vault_dir: Path | None = None) -> list[dict]:
         # prune the long tail so the ledger stays bounded
         conn.execute(
             "DELETE FROM recall_log WHERE key IN ("
-            "SELECT key FROM recall_log ORDER BY last_recalled_at DESC "
-            "LIMIT -1 OFFSET ?)",
+            "SELECT key FROM recall_log WHERE promoted_at IS NULL "
+            "ORDER BY last_recalled_at DESC LIMIT -1 OFFSET ?)",
             (_MAX_ENTRIES,),
         )
         conn.commit()

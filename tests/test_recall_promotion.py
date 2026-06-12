@@ -38,6 +38,8 @@ class RecallPromotionTests(unittest.TestCase):
         import json
 
         self.assertEqual(len(json.loads(row["query_hashes"])), 2)
+        # both tracks happened today — distinct-day count must stay 1
+        self.assertEqual(row["daily_count"], 1)
 
     def test_evaluate_scores_in_unit_range_and_needs_recalls(self):
         from friday.memory.recall_log import evaluate_candidate
@@ -80,6 +82,14 @@ class RecallPromotionTests(unittest.TestCase):
         self.assertIn("black coffee", note.read_text(encoding="utf-8"))
         # second promote run: nothing left
         self.assertEqual(recall_log.promote(vault_dir=vault_dir), [])
+
+    def test_track_never_raises_on_bad_hit(self):
+        from friday.memory import recall_log
+
+        class Broken:
+            pass
+
+        recall_log.track([Broken()], "query")  # must not raise
 
 
 if __name__ == "__main__":
