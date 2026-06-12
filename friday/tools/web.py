@@ -99,7 +99,7 @@ async def fetch_and_parse_feed(client, url):
         root = ET.fromstring(response.content)
         # Extract source name from URL (e.g., 'BBC' or 'NYTIMES')
         source_name = url.split('.')[1].upper()
-        
+
         feed_items = []
         # Get top 5 items per feed
         items = root.findall(".//item")[:5]
@@ -107,7 +107,7 @@ async def fetch_and_parse_feed(client, url):
             title = item.findtext("title")
             description = item.findtext("description")
             link = item.findtext("link")
-            
+
             if description:
                 description = re.sub('<[^<]+?>', '', description).strip()
 
@@ -122,6 +122,53 @@ async def fetch_and_parse_feed(client, url):
         # If one feed fails, return an empty list so others can still succeed
         return []
 
+
+async def gather_world_news() -> str:
+    """Extract and reusable gatherer for global news headlines from major outlets."""
+    async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+        # 1. Create a list of 'tasks' (one for each URL)
+        tasks = [fetch_and_parse_feed(client, url) for url in SEED_FEEDS]
+
+        # 2. Fire them all at once and wait for the results
+        # results will be a list of lists: [[news from bbc], [news from nyt], ...]
+        results_of_lists = await asyncio.gather(*tasks)
+
+        # 3. Flatten the list of lists into a single list of articles
+        all_articles = [item for sublist in results_of_lists for item in sublist]
+
+    if not all_articles:
+        return "The global news grid is unresponsive, sir. I'm unable to pull headlines."
+
+    # 4. Format the final briefing
+    report = ["### GLOBAL NEWS BRIEFING (LIVE)\n"]
+    # Limit to top 12 items so the AI doesn't get overwhelmed
+    for entry in all_articles[:12]:
+        report.append(f"**[{entry['source']}]** {entry['title']}")
+        report.append(f"{entry['summary']}")
+        report.append(f"Link: {entry['link']}\n")
+
+    return "\n".join(report)
+
+
+async def gather_finance_news() -> str:
+    """Reusable gatherer for finance and market headlines from major financial outlets."""
+    async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+        tasks = [fetch_and_parse_feed(client, url) for url in FINANCE_SEED_FEEDS]
+        results_of_lists = await asyncio.gather(*tasks)
+        all_articles = [item for sublist in results_of_lists for item in sublist]
+
+    if not all_articles:
+        return "The financial feeds are unresponsive right now, sir. I can't pull market headlines."
+
+    report = ["### FINANCE BRIEFING (LIVE)\n"]
+    for entry in all_articles[:12]:
+        report.append(f"**[{entry['source']}]** {entry['title']}")
+        report.append(f"{entry['summary']}")
+        report.append(f"Link: {entry['link']}\n")
+
+    return "\n".join(report)
+
+
 def register(mcp):
 
     @mcp.tool()
@@ -130,30 +177,7 @@ def register(mcp):
         Fetches the latest global headlines from major news outlets simultaneously.
         Use this when the user asks 'What's going on in the world?' or for recent events.
         """
-        
-        async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
-            # 1. Create a list of 'tasks' (one for each URL)
-            tasks = [fetch_and_parse_feed(client, url) for url in SEED_FEEDS]
-            
-            # 2. Fire them all at once and wait for the results
-            # results will be a list of lists: [[news from bbc], [news from nyt], ...]
-            results_of_lists = await asyncio.gather(*tasks)
-            
-            # 3. Flatten the list of lists into a single list of articles
-            all_articles = [item for sublist in results_of_lists for item in sublist]
-
-        if not all_articles:
-            return "The global news grid is unresponsive, sir. I'm unable to pull headlines."
-
-        # 4. Format the final briefing
-        report = ["### GLOBAL NEWS BRIEFING (LIVE)\n"]
-        # Limit to top 12 items so the AI doesn't get overwhelmed
-        for entry in all_articles[:12]:
-            report.append(f"**[{entry['source']}]** {entry['title']}")
-            report.append(f"{entry['summary']}")
-            report.append(f"Link: {entry['link']}\n")
-
-        return "\n".join(report)
+        return await gather_world_news()
 
     @mcp.tool()
     async def get_world_finance_news() -> str:
@@ -161,22 +185,7 @@ def register(mcp):
         Fetches the latest finance and market headlines from major financial outlets simultaneously.
         Use this when the user asks about finance news, market updates, or economic developments.
         """
-
-        async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
-            tasks = [fetch_and_parse_feed(client, url) for url in FINANCE_SEED_FEEDS]
-            results_of_lists = await asyncio.gather(*tasks)
-            all_articles = [item for sublist in results_of_lists for item in sublist]
-
-        if not all_articles:
-            return "The financial feeds are unresponsive right now, sir. I can't pull market headlines."
-
-        report = ["### FINANCE BRIEFING (LIVE)\n"]
-        for entry in all_articles[:12]:
-            report.append(f"**[{entry['source']}]** {entry['title']}")
-            report.append(f"{entry['summary']}")
-            report.append(f"Link: {entry['link']}\n")
-
-        return "\n".join(report)
+        return await gather_finance_news()
 
     @mcp.tool()
     async def search_web(query: str, max_results: int = 6) -> str:
