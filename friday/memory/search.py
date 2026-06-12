@@ -142,9 +142,7 @@ def search(query: str, k: int = 5, root: Path | None = None) -> list[Hit]:
         index.reindex_if_stale()
         hits = _fts_search(terms, k)
         if hits:
-            logger.debug("FTS search returned %d hits", len(hits))
             return hits
-        logger.debug("FTS search returned empty, falling back to scan")
     except Exception as exc:
         logger.debug("FTS search unavailable, scanning: %s", exc)
     return _scan_search(terms, k, root)
