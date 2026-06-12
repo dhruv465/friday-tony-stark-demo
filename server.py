@@ -32,6 +32,14 @@ async def _lifespan(app):
         logging.getLogger("friday").info("Memory index ready: %s", stats)
     except Exception as exc:
         logging.getLogger("friday").warning("Memory reindex skipped: %s", exc)
+    # Start the subagent runtime so scheduled jobs and event alerts tick
+    # even before any agent is deployed.
+    try:
+        from friday.agents.runtime import SubagentRuntime
+
+        SubagentRuntime.instance().ensure_running()
+    except Exception as exc:
+        logging.getLogger("friday").warning("Runtime start skipped: %s", exc)
     yield {}
 
 

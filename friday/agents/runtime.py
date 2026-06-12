@@ -911,6 +911,48 @@ def _notify(slug: str, record: dict, detail: str) -> None:
     set_pending_notify(slug, detail)
 
 
+# ---------------------------------------------------------------------------
+# Proactive event alerts (temporal facts)
+# ---------------------------------------------------------------------------
+
+_EVENTS_PSEUDO_SLUG = "events"
+_last_groom_ts = 0.0
+
+
+def _alert_line(event: dict) -> str:
+    content = event["content"]
+    window = event["window"]
+    if window == "now":
+        return f"Reminder: {content} is starting now."
+    if window == "1h":
+        return f"Reminder: {content} in about an hour."
+    return f"Reminder: {content} in {round(event['minutes_until'])} minutes."
+
+
+def check_event_alerts() -> None:
+    """One sweep of the temporal-facts alert windows. Fires a macOS
+    notification immediately and parks a pending notify so the voice
+    agent mentions it on the next exchange. Never raises — this runs
+    inside the scheduler tick."""
+    global _last_groom_ts
+    try:
+        from friday.memory import facts
+
+        now_ts = time.time()
+        if now_ts - _last_groom_ts > 3600:
+            _last_groom_ts = now_ts
+            facts.groom_expired()
+
+        for event in facts.events_due_for_alert():
+            line = _alert_line(event)
+            _mac_notification("FRIDAY — reminder", line)
+            set_pending_notify(_EVENTS_PSEUDO_SLUG, line)
+            emit_activity(line, kind="ok")
+            facts.mark_alerted(event["id"], event["window"])
+    except Exception as exc:
+        logger.debug("event alert sweep skipped: %s", exc)
+
+
 async def _run_agent_job(slug: str) -> None:
     """One scheduled/immediate run of an agent, plus monitor bookkeeping."""
     record = load_record(slug)
@@ -979,6 +1021,11 @@ class SubagentRuntime:
                 cls._instance = cls()
             return cls._instance
 
+    def ensure_running(self) -> None:
+        """Start the daemon loop + scheduler without deploying a job —
+        used by server boot so event alerts fire from minute one."""
+        self._ensure_loop()
+
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
         if self._loop is not None and self._thread is not None and self._thread.is_alive():
             return self._loop
@@ -1008,11 +1055,12 @@ class SubagentRuntime:
         status to running before launch makes double-fires impossible —
         the next tick no longer sees the record as scheduled."""
         while True:
+            await asyncio.sleep(_scheduler_tick_s())
             try:
                 self._tick(time.time())
             except Exception:
                 logger.exception("scheduler tick failed")
-            await asyncio.sleep(_scheduler_tick_s())
+            check_event_alerts()
 
     def _tick(self, now: float) -> None:
         for record in list_records():
