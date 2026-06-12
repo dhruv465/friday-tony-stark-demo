@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -34,26 +35,42 @@ def _tokenize(text: str) -> list[str]:
     return [t.lower() for t in _WORD.findall(text)]
 
 
-def _fts_search(terms: list[str], k: int) -> list[Hit]:
-    """BM25 search over notes_fts. Raises on any sqlite trouble — caller
-    falls back to the scan. Searches the whole index (vault + knowledge rows)."""
+def _fts_search(terms: list[str], k: int, namespace: str | None = None) -> list[Hit]:
+    """BM25 search over notes_fts, optionally limited to one namespace prefix
+    ('vault' or 'knowledge'). Raises on sqlite connect or query failure —
+    caller falls back to scan."""
     from friday.memory import db
 
     match = " ".join(f'"{t}"*' for t in terms)
     conn = db.connect()
     try:
-        rows = conn.execute(
-            """
-            SELECT path, title,
-                   snippet(notes_fts, 2, '', '', '…', 24) AS snip,
-                   bm25(notes_fts, 0.0, 5.0, 1.0) AS rank
-            FROM notes_fts
-            WHERE notes_fts MATCH ?
-            ORDER BY rank
-            LIMIT ?
-            """,
-            (match, k),
-        ).fetchall()
+        if namespace is not None:
+            rows = conn.execute(
+                """
+                SELECT path, title,
+                       snippet(notes_fts, 2, '', '', '…', 24) AS snip,
+                       bm25(notes_fts, 0.0, 5.0, 1.0) AS rank
+                FROM notes_fts
+                WHERE notes_fts MATCH ?
+                  AND path LIKE ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (match, f"{namespace}:%", k),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT path, title,
+                       snippet(notes_fts, 2, '', '', '…', 24) AS snip,
+                       bm25(notes_fts, 0.0, 5.0, 1.0) AS rank
+                FROM notes_fts
+                WHERE notes_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (match, k),
+            ).fetchall()
     finally:
         conn.close()
     hits = []
@@ -66,6 +83,8 @@ def _fts_search(terms: list[str], k: int) -> list[Hit]:
             Hit(
                 path=rel,
                 title=row["title"] or rel,
+                # BM25 scores land roughly in [0.01, ~2]; the scan fallback's
+                # term counts run much higher. Ledger consumers normalize.
                 score=max(0.01, -float(row["rank"])),
                 snippet=" ".join((row["snip"] or "").split()),
             )
@@ -131,7 +150,7 @@ def _scan_search(terms: list[str], k: int, root: Path) -> list[Hit]:
     return hits[:k]
 
 
-def search(query: str, k: int = 5, root: Path | None = None) -> list[Hit]:
+def search(query: str, k: int = 5, root: Path | None = None, namespace: str | None = None) -> list[Hit]:
     root = root or vault.vault_root()
     terms = _tokenize(query)
     if not terms:
@@ -140,9 +159,9 @@ def search(query: str, k: int = 5, root: Path | None = None) -> list[Hit]:
         from friday.memory import index
 
         index.reindex_if_stale()
-        hits = _fts_search(terms, k)
+        hits = _fts_search(terms, k, namespace)
         if hits:
             return hits
-    except Exception as exc:
+    except (sqlite3.Error, OSError) as exc:
         logger.debug("FTS search unavailable, scanning: %s", exc)
     return _scan_search(terms, k, root)

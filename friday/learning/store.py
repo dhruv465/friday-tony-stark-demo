@@ -255,4 +255,4 @@ def release_runner_lock(slug: str) -> None:
 
 def recall(query: str, k: int = 5) -> list[memory_search.Hit]:
     """Keyword search across all knowledge notes (not the memory vault)."""
-    return memory_search.search(query, k=k, root=knowledge_root())
+    return memory_search.search(query, k=k, root=knowledge_root(), namespace="knowledge")

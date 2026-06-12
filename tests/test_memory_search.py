@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -10,11 +11,12 @@ from unittest.mock import patch
 class MemorySearchTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
+        self._vault_tmp = tempfile.TemporaryDirectory()
         self._env = patch.dict(
             os.environ, {"FRIDAY_KNOWLEDGE_DIR": self._tmp.name}, clear=False
         )
         self._env.start()
-        self.vault_dir = Path(self._tmp.name) / "vault"
+        self.vault_dir = Path(self._vault_tmp.name)
         (self.vault_dir / "Facts").mkdir(parents=True)
         (self.vault_dir / "Facts" / "coffee.md").write_text(
             "# Coffee preference\n\nThe boss drinks black coffee, no sugar, every morning.\n",
@@ -26,10 +28,14 @@ class MemorySearchTests(unittest.TestCase):
         from friday.memory import index
 
         index.reindex(vault_dir=self.vault_dir, knowledge_dir=Path(self._tmp.name) / "nokn")
+        # Freeze the throttle so search() can never trigger a default-root reindex
+        # (which would walk the real Obsidian vault or double-index knowledge rows).
+        index._last_reindex_ts = time.time()
 
     def tearDown(self):
         self._env.stop()
         self._tmp.cleanup()
+        self._vault_tmp.cleanup()
 
     def test_fts_search_finds_note_and_fills_hit_fields(self):
         from friday.memory import search
@@ -48,9 +54,10 @@ class MemorySearchTests(unittest.TestCase):
         self.assertEqual(search.search("quantum chromodynamics", root=self.vault_dir), [])
 
     def test_scan_fallback_used_when_fts_unavailable(self):
+        import sqlite3
         from friday.memory import search
 
-        with patch.object(search, "_fts_search", side_effect=Exception("no fts")):
+        with patch.object(search, "_fts_search", side_effect=sqlite3.OperationalError("no fts")):
             hits = search.search("green tea", k=5, root=self.vault_dir)
         self.assertTrue(hits)
         self.assertEqual(hits[0].path, "Facts/tea.md")
@@ -59,6 +66,12 @@ class MemorySearchTests(unittest.TestCase):
         from friday.memory import search
 
         hits = search.search('coffee" OR 1=1 -- (*)', k=3, root=self.vault_dir)
+        self.assertIsInstance(hits, list)
+
+    def test_numeric_only_query_does_not_crash(self):
+        from friday.memory import search
+
+        hits = search.search("123", k=3, root=self.vault_dir)
         self.assertIsInstance(hits, list)
 
 
