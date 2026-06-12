@@ -5,6 +5,7 @@ Add new tool modules here as you build them.
 
 from friday.tools import (
     desktop,
+    digest,
     diagnostics,
     events,
     hud,
@@ -34,6 +35,7 @@ def register_all_tools(mcp):
     messaging.register(mcp)
     memory.register(mcp)
     events.register(mcp)
+    digest.register(mcp)
     diagnostics.register(mcp)
     local_apps.register(mcp)
     odysseus.register(mcp)
