@@ -29,6 +29,11 @@ class FeedbackTests(unittest.TestCase):
         self.assertIn(("response_style", "concise"), self._detect("be more concise please"))
         self.assertIn(("use_emojis", "no"), self._detect("don't use emojis"))
 
+        from friday.memory import profile
+
+        # the bare "use emojis" pattern must NOT overwrite the negative match
+        self.assertEqual(profile.get_field("use_emojis", root=self.vault_dir), "no")
+
     def test_no_match_saves_nothing(self):
         self.assertEqual(self._detect("what's the weather like"), [])
 

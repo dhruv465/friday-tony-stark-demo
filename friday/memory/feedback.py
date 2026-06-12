@@ -29,13 +29,19 @@ _NORMALIZE = {"brief": "concise", "short": "concise"}
 
 
 def detect_and_save(user_text: str, root: Path | None = None) -> list[tuple[str, str]]:
-    """Scan one user utterance; save changed preferences. Never raises."""
+    """Scan one user utterance; save changed preferences. Never raises.
+    First matching pattern wins per field — negative patterns are listed
+    before their positive counterparts."""
     saved: list[tuple[str, str]] = []
+    matched_fields: set[str] = set()
     try:
         for pattern, field, value_spec in _PATTERNS:
+            if field in matched_fields:
+                continue
             match = pattern.search(user_text)
             if not match:
                 continue
+            matched_fields.add(field)
             value = match.group(value_spec) if isinstance(value_spec, int) else value_spec
             value = _NORMALIZE.get(value.lower(), value).strip()
             if field == "response_style":
