@@ -19,6 +19,9 @@ class EventAlertTests(unittest.TestCase):
             clear=False,
         )
         self._env.start()
+        from friday.agents import runtime
+
+        runtime._last_groom_ts = 0.0
 
     def tearDown(self):
         self._env.stop()

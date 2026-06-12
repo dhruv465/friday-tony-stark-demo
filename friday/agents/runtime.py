@@ -1060,7 +1060,10 @@ class SubagentRuntime:
                 self._tick(time.time())
             except Exception:
                 logger.exception("scheduler tick failed")
-            check_event_alerts()
+            try:
+                check_event_alerts()
+            except Exception:
+                logger.exception("event alert sweep failed")
 
     def _tick(self, now: float) -> None:
         for record in list_records():

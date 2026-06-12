@@ -3,10 +3,13 @@ User profile primitives — the `- **field**: value` bullet list in
 Profile/about_user.md. Extracted from friday/tools/memory.py so the
 voice-agent hooks (feedback capture, reflection, context injection) can
 read/write the profile without going through MCP.
+
+Writes are atomic but unlocked — last writer wins on concurrent updates.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from friday.memory import vault
@@ -18,6 +21,13 @@ PROFILE_REL = "Profile/about_user.md"
 def _profile_path(root: Path | None) -> Path:
     base = root if root is not None else vault.vault_root()
     return base / PROFILE_REL
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def split_frontmatter(text: str) -> tuple[str, str]:
@@ -73,5 +83,4 @@ def update_field(field: str, value: str, root: Path | None = None) -> None:
         lines.append(bullet)
     new_body = "\n".join(lines).rstrip() + "\n"
     frontmatter = f"---\ntags: [profile]\nupdated: {vault.now_iso()}\n---\n\n"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(frontmatter + new_body, encoding="utf-8")
+    _atomic_write(path, frontmatter + new_body)

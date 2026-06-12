@@ -23,6 +23,8 @@ class ProfileTests(unittest.TestCase):
         self.assertIn("- **address_as**: chief", text)
         self.assertNotIn("boss", text)
         self.assertIn("- **tone**: dry", text)
+        raw = (self.vault_dir / "Profile" / "about_user.md").read_text(encoding="utf-8")
+        self.assertIn("tags: [profile]", raw)
 
     def test_profile_text_empty_when_missing(self):
         from friday.memory import profile
@@ -35,6 +37,13 @@ class ProfileTests(unittest.TestCase):
         profile.update_field("use_emojis", "no", root=self.vault_dir)
         self.assertEqual(profile.get_field("use_emojis", root=self.vault_dir), "no")
         self.assertIsNone(profile.get_field("nope", root=self.vault_dir))
+
+    def test_update_field_ignores_empty_input(self):
+        from friday.memory import profile
+
+        profile.update_field("", "x", root=self.vault_dir)
+        profile.update_field("field", "  ", root=self.vault_dir)
+        self.assertEqual(profile.profile_text(root=self.vault_dir), "")
 
 
 if __name__ == "__main__":

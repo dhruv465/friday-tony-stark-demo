@@ -115,6 +115,6 @@ def register(mcp):
 
     @mcp.tool()
     async def get_profile() -> str:
-        """Return the about-user profile note verbatim."""
+        """Return the about-user profile (bullet list, no frontmatter)."""
         body = profile_mod.profile_text()
         return body or "(no profile yet)"
