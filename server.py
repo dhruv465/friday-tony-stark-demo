@@ -24,6 +24,14 @@ async def _lifespan(app):
             logging.getLogger("friday").info("Resumed learning jobs: %s", resumed)
     except Exception as exc:
         logging.getLogger("friday").warning("Learning resume skipped: %s", exc)
+    # Build/refresh the memory FTS index so first searches are warm.
+    try:
+        from friday.memory.index import reindex
+
+        stats = reindex()
+        logging.getLogger("friday").info("Memory index ready: %s", stats)
+    except Exception as exc:
+        logging.getLogger("friday").warning("Memory reindex skipped: %s", exc)
     yield {}
 
 

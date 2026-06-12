@@ -6,7 +6,7 @@ look them up in later sessions.
 
 from __future__ import annotations
 
-from friday.memory import vault, journal, search
+from friday.memory import vault, journal, recall_log, search
 
 
 _VALID_CATEGORIES = {
@@ -79,6 +79,7 @@ def register(mcp):
         "who is Y", "what's my Z".
         """
         hits = search.search(query, k=max(1, min(max_results, 20)))
+        recall_log.track(hits, query)
         if not hits:
             return f"No notes match {query!r}."
         lines = []
