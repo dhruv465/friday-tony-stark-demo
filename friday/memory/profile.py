@@ -63,8 +63,10 @@ def get_field(field: str, root: Path | None = None) -> str | None:
 
 def update_field(field: str, value: str, root: Path | None = None) -> None:
     """Insert or replace one `- **field**: value` bullet."""
-    field = field.strip()
-    value = value.strip()
+    # One bullet per line — embedded newlines would corrupt the format
+    # and leak extra lines into the injected [USER PROFILE] block.
+    field = " ".join(field.split())
+    value = " ".join(value.split())
     if not field or not value:
         return
     path = _profile_path(root)

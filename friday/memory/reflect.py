@@ -49,6 +49,8 @@ def _model() -> str:
     return os.getenv("FRIDAY_LEARNER_MODEL", config.FRIDAY_LEARNER_MODEL)
 
 
+# Unlike learning/llm.py there is no malformed-JSON retry: a bad response
+# just skips this reflection pass (next one is ≤12 turns away).
 async def _json_call(system: str, user: str) -> dict:
     client = _get_client()
     response = await client.chat.completions.create(

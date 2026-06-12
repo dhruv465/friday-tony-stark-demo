@@ -45,6 +45,14 @@ class ProfileTests(unittest.TestCase):
         profile.update_field("field", "  ", root=self.vault_dir)
         self.assertEqual(profile.profile_text(root=self.vault_dir), "")
 
+    def test_update_field_collapses_newlines(self):
+        from friday.memory import profile
+
+        profile.update_field("occu\npation", "found\ner", root=self.vault_dir)
+        self.assertEqual(
+            profile.get_field("occu pation", root=self.vault_dir), "found er"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
