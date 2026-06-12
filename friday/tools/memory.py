@@ -6,7 +6,7 @@ look them up in later sessions.
 
 from __future__ import annotations
 
-from friday.memory import vault, journal, recall_log, search
+from friday.memory import vault, journal, profile as profile_mod, recall_log, search
 
 
 _VALID_CATEGORIES = {
@@ -15,8 +15,6 @@ _VALID_CATEGORIES = {
     "projects": "Projects",
     "preferences": "Preferences",
 }
-
-_PROFILE_PATH = "Profile/about_user.md"
 
 
 def _category_folder(category: str) -> str:
@@ -112,47 +110,11 @@ def register(mcp):
         value = value.strip()
         if not field or not value:
             return "Field and value are both required."
-
-        existing = vault.read_note(_PROFILE_PATH) or ""
-        body, frontmatter_block = _split_frontmatter(existing)
-        bullet = f"- **{field}**: {value}"
-        lines = body.splitlines()
-
-        prefix = f"- **{field}**:"
-        replaced = False
-        for i, line in enumerate(lines):
-            if line.startswith(prefix):
-                lines[i] = bullet
-                replaced = True
-                break
-        if not replaced:
-            if not lines or lines[-1].strip():
-                lines.append("")
-            lines.append(bullet)
-
-        new_body = "\n".join(lines).rstrip() + "\n"
-        frontmatter = {
-            "tags": ["profile"],
-            "updated": vault.now_iso(),
-        }
-        vault.write_note(_PROFILE_PATH, new_body, frontmatter=frontmatter)
+        profile_mod.update_field(field, value)
         return f"Profile updated: {field} = {value}"
 
     @mcp.tool()
     async def get_profile() -> str:
         """Return the about-user profile note verbatim."""
-        body = vault.read_note(_PROFILE_PATH)
+        body = profile_mod.profile_text()
         return body or "(no profile yet)"
-
-
-def _split_frontmatter(text: str) -> tuple[str, str]:
-    """Strip a leading YAML frontmatter block (---...---) if present."""
-    if not text.startswith("---"):
-        return text, ""
-    end = text.find("\n---", 3)
-    if end < 0:
-        return text, ""
-    fm_end = text.find("\n", end + 4)
-    if fm_end < 0:
-        return "", text
-    return text[fm_end + 1 :].lstrip("\n"), text[: fm_end + 1]
