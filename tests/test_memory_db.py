@@ -1,7 +1,6 @@
 """Tests for friday/memory/db.py — schema creation and env-pointed path."""
 
 import os
-import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -56,6 +55,9 @@ class MemoryDbTests(unittest.TestCase):
         c2 = db.connect()  # second connect must not fail on existing schema
         c2.execute("INSERT INTO note_meta (path, mtime) VALUES ('x', 1.0)")
         c2.commit()
+        row = c2.execute("SELECT mtime FROM note_meta WHERE path = 'x'").fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["mtime"], 1.0)
         c2.close()
 
 

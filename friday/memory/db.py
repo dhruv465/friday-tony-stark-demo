@@ -10,11 +10,14 @@ tempdir).
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 from pathlib import Path
 
 from friday.config import config
+
+logger = logging.getLogger("friday.memory.db")
 
 
 _SCHEMA = """
@@ -75,9 +78,17 @@ def db_path() -> Path:
 def connect() -> sqlite3.Connection:
     """Open a connection with WAL + schema ensured. Caller closes it."""
     conn = sqlite3.connect(db_path(), timeout=5.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    conn.executescript(_SCHEMA)
+    try:
+        conn.row_factory = sqlite3.Row
+        mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+        if str(mode).lower() != "wal":
+            logger.warning(
+                "WAL mode unavailable (got %r) — concurrent access may be slow", mode
+            )
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.executescript(_SCHEMA)
+    except Exception:
+        conn.close()
+        raise
     return conn
