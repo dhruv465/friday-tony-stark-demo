@@ -112,6 +112,21 @@ class FactsStoreTests(unittest.TestCase):
         self.assertIn("days away", lines[1])
         self.assertEqual(len(facts.itinerary_lines(now=now, cap=1)), 1)
 
+    def test_aware_datetime_stored_as_naive_local(self):
+        from friday.memory import db, facts
+
+        aware = (dt.datetime.now() + dt.timedelta(days=1)).astimezone()
+        facts.add_event("tz event", aware)
+        conn = db.connect()
+        try:
+            row = conn.execute("SELECT date_start FROM facts").fetchone()
+        finally:
+            conn.close()
+        self.assertNotIn("+", row["date_start"])
+        stored = dt.datetime.fromisoformat(row["date_start"])
+        self.assertIsNone(stored.tzinfo)
+        self.assertEqual(stored, aware.astimezone().replace(tzinfo=None, microsecond=0))
+
 
 if __name__ == "__main__":
     unittest.main()

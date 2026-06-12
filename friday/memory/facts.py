@@ -19,6 +19,10 @@ def _now_iso() -> str:
 
 
 def _as_iso(value: _dt.datetime) -> str:
+    if value.tzinfo is not None:
+        # Convert to local wall time, then store naive — every stored
+        # string must sort against naive local `_now_iso()` bounds.
+        value = value.astimezone().replace(tzinfo=None)
     return value.replace(microsecond=0).isoformat()
 
 

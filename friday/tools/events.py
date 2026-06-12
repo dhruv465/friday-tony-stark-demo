@@ -77,6 +77,8 @@ def register(mcp):
                 continue
             if start > horizon:
                 continue
+            # TODO: match by event id once itinerary_lines carries ids —
+            # content-substring matching collapses duplicate-content events.
             for line in facts.itinerary_lines(cap=99):
                 if event["content"] in line and line not in lines:
                     lines.append(line)
