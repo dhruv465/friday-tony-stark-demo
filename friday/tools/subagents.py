@@ -318,4 +318,6 @@ def register(mcp):
         """
         from friday.agents import runtime
 
+        # NOTE: morning_digest (friday/tools/digest.py) consumes these same
+        # flags — whichever runs first delivers the news.
         return {"status": "ok", "news": runtime.pop_pending_notifies()}

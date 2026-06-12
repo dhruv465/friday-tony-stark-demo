@@ -45,8 +45,9 @@ class DigestTests(unittest.TestCase):
 
         facts.add_event("standup", dt.datetime.now() + dt.timedelta(hours=3))
         mcp = self._register()
+        world_mock = AsyncMock(return_value="BRIEFING (LIVE)\n1. Big story")
         with patch.object(
-            digest_mod, "gather_world_news", AsyncMock(return_value="BRIEFING (LIVE)\n1. Big story")
+            digest_mod, "gather_world_news", world_mock
         ), patch.object(
             digest_mod, "gather_finance_news", AsyncMock(return_value="BRIEFING (LIVE)\n1. Markets up")
         ), patch.object(
@@ -60,6 +61,7 @@ class DigestTests(unittest.TestCase):
             # cached: second call returns same content without re-fetching
             out2 = asyncio.run(mcp.tools["morning_digest"]())
             self.assertEqual(out, out2)
+            world_mock.assert_called_once()  # second call served from cache
 
     def test_fresh_regenerates_and_failed_sections_degrade(self):
         from friday.tools import digest as digest_mod

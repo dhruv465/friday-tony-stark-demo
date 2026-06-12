@@ -68,6 +68,8 @@ def _agent_news_section() -> str:
     try:
         from friday.agents.runtime import pop_pending_notifies
 
+        # NOTE: destructive — clears the same notify flags check_agent_news
+        # (friday/tools/subagents.py) reads. The digest IS the delivery.
         pending = pop_pending_notifies()
         if not pending:
             return "(nothing overnight)"
@@ -101,8 +103,8 @@ async def _build() -> str:
         f"MORNING DIGEST — {now:%A, %B %d, %Y}\n\n"
         f"## Today's events\n{_events_section()}\n\n"
         f"## Weather\n{weather}\n\n"
-        f"## World\n{_top_lines(world, 5)}\n\n"
-        f"## Markets\n{_top_lines(finance, 3)}\n\n"
+        f"## World\n{_top_lines(world, 15)}\n\n"
+        f"## Markets\n{_top_lines(finance, 9)}\n\n"
         f"## Overnight agent news\n{_agent_news_section()}\n"
     )
 
