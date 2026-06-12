@@ -34,9 +34,9 @@ def _tokenize(text: str) -> list[str]:
     return [t.lower() for t in _WORD.findall(text)]
 
 
-def _fts_search(terms: list[str], k: int, prefix: str = "vault") -> list[Hit]:
+def _fts_search(terms: list[str], k: int) -> list[Hit]:
     """BM25 search over notes_fts. Raises on any sqlite trouble — caller
-    falls back to the scan. prefix filters to "vault:" or "knowledge:" entries."""
+    falls back to the scan. Searches the whole index (vault + knowledge rows)."""
     from friday.memory import db
 
     match = " ".join(f'"{t}"*' for t in terms)
@@ -48,11 +48,11 @@ def _fts_search(terms: list[str], k: int, prefix: str = "vault") -> list[Hit]:
                    snippet(notes_fts, 2, '', '', '…', 24) AS snip,
                    bm25(notes_fts, 0.0, 5.0, 1.0) AS rank
             FROM notes_fts
-            WHERE notes_fts MATCH ? AND path LIKE ?
+            WHERE notes_fts MATCH ?
             ORDER BY rank
             LIMIT ?
             """,
-            (match, f"{prefix}:%", k),
+            (match, k),
         ).fetchall()
     finally:
         conn.close()
@@ -132,7 +132,6 @@ def _scan_search(terms: list[str], k: int, root: Path) -> list[Hit]:
 
 
 def search(query: str, k: int = 5, root: Path | None = None) -> list[Hit]:
-    root_is_custom = root is not None
     root = root or vault.vault_root()
     terms = _tokenize(query)
     if not terms:
@@ -141,11 +140,7 @@ def search(query: str, k: int = 5, root: Path | None = None) -> list[Hit]:
         from friday.memory import index
 
         index.reindex_if_stale()
-        # Determine which prefix to search: "vault" for the memory vault,
-        # "knowledge" for learned notes. Default to "vault" unless root is
-        # the knowledge dir.
-        prefix = "knowledge" if "knowledge" in str(root) else "vault"
-        hits = _fts_search(terms, k, prefix=prefix)
+        hits = _fts_search(terms, k)
         if hits:
             logger.debug("FTS search returned %d hits", len(hits))
             return hits
