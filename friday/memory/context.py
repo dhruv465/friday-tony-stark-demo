@@ -50,10 +50,13 @@ def build_block(user_text: str, root: Path | None = None) -> str:
             for event in due:
                 try:
                     start = _dt.datetime.fromisoformat(event["date_start"])
-                except ValueError:
+                except (ValueError, TypeError):
                     continue
                 hours = max(0, int((start - now).total_seconds() // 3600))
                 lines.append(f"- {start:%A %I:%M %p} (in ~{hours}h): {event['content']}")
+                # Best-effort: consumed at block assembly — if the turn
+                # aborts before speech, the day-before nudge is gone (the
+                # event-day 1h/15m/now alerts still fire from the runtime).
                 facts.mark_reminder_sent(event["id"])
             if lines:
                 parts.append(
