@@ -3,6 +3,7 @@ Temporal facts — dated events with conflict linting, day-before
 reminders, and minute-level alert windows. Port of the MemOS FactStore +
 ProactiveEventsWatcher mechanics onto Friday's shared memory.db. Alert
 dedup lives in columns (alerted_1h/15m/now), not a side file.
+All datetimes are naive local time; DST transitions can shift alert windows by ±1 hour.
 """
 
 from __future__ import annotations
@@ -87,7 +88,7 @@ def _overlaps(left: dict, right: dict) -> bool:
         rs, re_ = _parse(right["date_start"]), _parse(right["date_end"])
     except Exception:
         return False
-    return ls <= re_ and rs <= le
+    return ls < re_ and rs < le
 
 
 def lint_conflicts() -> int:
@@ -182,9 +183,13 @@ def groom_expired() -> int:
             (_now_iso(),),
         )
         conn.commit()
-        return cur.rowcount
+        count = cur.rowcount
     finally:
         conn.close()
+    if count:
+        # An expiry can dissolve a conflict pair — re-derive contested flags.
+        lint_conflicts()
+    return count
 
 
 def itinerary_lines(now: _dt.datetime | None = None, cap: int = 12) -> list[str]:
@@ -200,7 +205,9 @@ def itinerary_lines(now: _dt.datetime | None = None, cap: int = 12) -> list[str]
         days_until = (ds.date() - now.date()).days
         if de < now:
             continue
-        if days_until <= 0:
+        if days_until < 0:
+            label = f"ONGOING until {de.strftime('%a %b %d %I:%M %p')}"
+        elif days_until == 0:
             label = f"TODAY {ds.strftime('%I:%M %p')}–{de.strftime('%I:%M %p')}"
         elif days_until == 1:
             label = f"TOMORROW {ds.strftime('%I:%M %p')}"

@@ -90,6 +90,28 @@ class FactsStoreTests(unittest.TestCase):
         self.assertEqual(expired, 1)
         self.assertEqual(facts.get_active_events(), [])
 
+    def test_non_overlapping_and_back_to_back_stay_active(self):
+        from friday.memory import facts
+
+        start = dt.datetime.now() + dt.timedelta(days=1)
+        self._add("morning sync", start, hours=1)
+        self._add("lunch", start + dt.timedelta(hours=1), hours=1)  # back-to-back
+        self._add("evening run", start + dt.timedelta(hours=6), hours=1)
+        facts.lint_conflicts()
+        self.assertEqual(facts.get_contested_events(), [])
+
+    def test_itinerary_lines_format_and_cap(self):
+        from friday.memory import facts
+
+        now = dt.datetime.now()
+        self._add("standup", now + dt.timedelta(days=1))
+        self._add("offsite", now + dt.timedelta(days=3))
+        lines = facts.itinerary_lines(now=now)
+        self.assertTrue(lines[0].startswith("- TOMORROW "))
+        self.assertIn("standup", lines[0])
+        self.assertIn("days away", lines[1])
+        self.assertEqual(len(facts.itinerary_lines(now=now, cap=1)), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
