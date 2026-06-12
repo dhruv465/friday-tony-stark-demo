@@ -36,6 +36,7 @@ There is no linter or build step configured. `main.py` is an unused "hello" stub
 - **Scheduler**: job records carry `schedule` (`{"at": iso}` one-shot or `{"every_minutes": n}` monitor); a tick loop inside `SubagentRuntime` launches due jobs. Monitors diff reports via LLM and notify only on change (`check_agent_news` tool surfaces pending notifies to the voice agent).
 - **Learning hooks**: finished jobs write `outcome.md` next to their report; new jobs get matching outcome notes injected as "lessons" into the worker prompt.
 - **Persona**: `FRIDAY_PERSONA_NAME` / `FRIDAY_PERSONA_BOSS` env rebrand `SYSTEM_PROMPT` and worker prompts (Marvel IP — required before public deployment).
+- **Memory intelligence** (`friday/memory/`): SQLite at `<FRIDAY_KNOWLEDGE_DIR>/_memory/memory.db` — FTS5 note index (`db.py`/`index.py`/`search.py` with scan fallback), recall ledger + promotion to `Profile/promoted.md` (`recall_log.py`), temporal facts with conflict linting + 1h/15m/now alert windows riding the runtime scheduler tick (`facts.py`, alerts in `agents/runtime.py:check_event_alerts`), per-turn context injection + instant preference capture + every-12-turns reflection wired in `agent_friday.py:on_user_turn_completed`. New tools: `events.py` (add/cancel/upcoming), `digest.py` (morning_digest, keyless wttr.in weather). Voice-path hooks must never raise — keep the try/except wrappers.
 
 ## Required env (.env)
 
