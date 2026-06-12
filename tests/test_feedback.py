@@ -41,6 +41,17 @@ class FeedbackTests(unittest.TestCase):
         self._detect("call me Chief")
         self.assertEqual(self._detect("call me Chief"), [])
 
+    def test_address_filler_words_rejected(self):
+        self.assertEqual(self._detect("call me back later"), [])
+        self.assertEqual(self._detect("call me tomorrow"), [])
+
+    def test_descriptive_emoji_sentence_not_captured(self):
+        self.assertEqual(self._detect("I use emojis in my messages all the time"), [])
+
+    def test_verbose_and_tone(self):
+        self.assertIn(("response_style", "verbose"), self._detect("be more verbose"))
+        self.assertIn(("tone", "playful"), self._detect("sound more playful"))
+
 
 if __name__ == "__main__":
     unittest.main()
